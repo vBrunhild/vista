@@ -7,6 +7,7 @@
  * @property {number} padRight - Right padding value.
  * @property {boolean} stripLinesVisible - Toggle for line visibility.
  * @property {boolean} sideBySide - Whether strips are columns placed side by side instead of stacked rows.
+ * @property {boolean} backstage - Whether the scene has a GM-only backstage area right of the scene.
  */
 
 /**
@@ -56,6 +57,8 @@ class VistaConfig {
   /** @readonly */ static FLAG_PAD_RIGHT = "padRight";
   /** @readonly */ static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
   /** @readonly */ static FLAG_SIDE_BY_SIDE = "sideBySide";
+  /** @readonly */ static FLAG_BACKSTAGE = "backstage";
+  /** @readonly */ static FLAG_TOKEN_BACKSTAGE = "inBackstage";
 
   /**
    * Retrieves sanitized configuration for a given scene.
@@ -72,6 +75,7 @@ class VistaConfig {
         padRight: 0,
         stripLinesVisible: true,
         sideBySide: false,
+        backstage: false,
       };
     }
 
@@ -84,6 +88,7 @@ class VistaConfig {
       stripLinesVisible: scene.getFlag(this.ID, this.FLAG_STRIP_LINES_VISIBLE)
         ?? game.settings.get(this.ID, "defaultStripLinesVisible"),
       sideBySide: scene.getFlag(this.ID, this.FLAG_SIDE_BY_SIDE) ?? false,
+      backstage: scene.getFlag(this.ID, this.FLAG_BACKSTAGE) ?? false,
     };
   }
 }
@@ -151,23 +156,44 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
       }
 
       const label = stripLabels[i];
-      if (label) {
-        const style = new PIXI.TextStyle({
-          fontFamily: "Signika",
-          fontSize: 28,
-          fill: "#ffffff",
-          stroke: "#000000",
-          strokeThickness: 3,
-          dropShadow: true,
-          dropShadowDistance: 2,
-        });
-
-        const text = new PIXI.Text(label, style);
-        text.anchor.set(0, 0);
-        text.position.set(bounds.x + 20, bounds.y + 10);
-        this.overlayContainer.addChild(text);
-      }
+      if (label) this.overlayContainer.addChild(this.createLabel(label, bounds));
     }
+
+    const backstage = moduleInstance.getBackstageBounds(config);
+    if (backstage && game.user.isGM) {
+      const area = new PIXI.Graphics()
+        .beginFill(0x000000, 0.25)
+        .drawRect(backstage.x, backstage.y, backstage.width, backstage.height)
+        .endFill()
+        .lineStyle(lineThickness, lineColor, lineOpacity)
+        .moveTo(backstage.x, backstage.y)
+        .lineTo(backstage.x, backstage.y + backstage.height);
+      this.overlayContainer.addChild(area);
+      this.overlayContainer.addChild(this.createLabel(game.i18n.localize("VISTA.BackstageLabel"), backstage));
+    }
+  }
+
+  /**
+   * Creates a label placed at the top left of an area.
+   * @param {string} label - The label text.
+   * @param {StripBounds} bounds - The labelled area.
+   * @returns {PIXI.Text}
+   */
+  createLabel(label, bounds) {
+    const style = new PIXI.TextStyle({
+      fontFamily: "Signika",
+      fontSize: 28,
+      fill: "#ffffff",
+      stroke: "#000000",
+      strokeThickness: 3,
+      dropShadow: true,
+      dropShadowDistance: 2,
+    });
+
+    const text = new PIXI.Text(label, style);
+    text.anchor.set(0, 0);
+    text.position.set(bounds.x + 20, bounds.y + 10);
+    return text;
   }
 }
 
@@ -497,13 +523,12 @@ class VistaModule {
 
   /**
    * Handler for the preCreateToken hook.
-   * Assigns the new token to the strip it was dropped on.
+   * Places the new token in the strip or backstage it was dropped on.
    * @param {TokenDocument.Implementation} tokenDoc - The token document being created.
    */
   preCreateToken(tokenDoc) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
-    const stripIndex = this.getStripIndexForToken(tokenDoc);
-    tokenDoc.updateSource({ [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: stripIndex });
+    tokenDoc.updateSource(this.getPlacementChanges(tokenDoc, tokenDoc));
   }
 
   /**
@@ -529,7 +554,7 @@ class VistaModule {
 
   /**
    * Handler for the preUpdateToken hook.
-   * Reassigns the strip in the same update as a manual move.
+   * Reassigns the strip or backstage in the same update as a manual move.
    * @param {TokenDocument.Implementation} tokenDoc - The token document being updated.
    * @param {TokenDocument.UpdateData} changes - The pending changes.
    * @param {TokenDocument.Database.PreUpdateOptions} options - The update options.
@@ -538,13 +563,13 @@ class VistaModule {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene || this.isArrangement(options)) return;
 
     if (typeof changes.x === "number" || typeof changes.y === "number") {
-      const stripIndex = this.getStripIndexForToken({
+      const placement = this.getPlacementChanges(tokenDoc, {
         x: changes.x ?? tokenDoc.x,
         y: changes.y ?? tokenDoc.y,
         width: changes.width ?? tokenDoc.width,
         height: changes.height ?? tokenDoc.height,
       });
-      foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
+      for (const [path, value] of Object.entries(placement)) foundry.utils.setProperty(changes, path, value);
     }
   }
 
@@ -598,6 +623,50 @@ class VistaModule {
   }
 
   /**
+   * Calculates the GM-only backstage area, which fills the canvas padding right of the scene.
+   * @param {VistaSceneConfig} config - The scene's Vista configuration.
+   * @returns {StripBounds | null} The backstage area, or null if the scene has none.
+   */
+  getBackstageBounds(config) {
+    if (!config.backstage) return null;
+    const { rect, sceneRect } = this.dimensions;
+    const width = rect.right - sceneRect.right;
+    if (width <= 0) return null;
+    return { x: sceneRect.right, y: sceneRect.y, width, height: sceneRect.height };
+  }
+
+  /**
+   * Builds the flag changes that place a token in the strip or backstage under its center.
+   * Tokens are hidden when entering backstage and revealed when leaving it, but tokens hidden
+   * for other reasons are never revealed.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document.
+   * @param {TokenTarget} position - The token's new position and size.
+   * @returns {Record<string, unknown>} Changes keyed by property path.
+   */
+  getPlacementChanges(tokenDoc, position) {
+    const backstage = this.getBackstageBounds(VistaConfig.get(canvas.scene));
+    const centerX = position.x + (position.width * this.dimensions.size) / 2;
+    const inBackstage = !!backstage && centerX >= backstage.x;
+    const wasInBackstage = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BACKSTAGE) ?? false;
+
+    /** @type {Record<string, unknown>} */
+    const changes = { [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_BACKSTAGE}`]: inBackstage };
+    if (!inBackstage) changes[`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`] = this.getStripIndexForToken(position);
+    if (inBackstage !== wasInBackstage) changes.hidden = inBackstage;
+    return changes;
+  }
+
+  /**
+   * Whether a token is backstage on a scene that has a backstage area.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document.
+   * @param {VistaSceneConfig} config - The scene's Vista configuration.
+   * @returns {boolean}
+   */
+  isBackstage(tokenDoc, config) {
+    return config.backstage && (tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BACKSTAGE) ?? false);
+  }
+
+  /**
    * Retrieves the strip a token is assigned to.
    * The stored index is clamped rather than rewritten when strips are removed,
    * so tokens return to their original strip if the count is raised again.
@@ -627,10 +696,7 @@ class VistaModule {
   async assignStripsFromPositions() {
     const scene = canvas.scene;
     if (!scene || !game.users.activeGM?.isSelf) return;
-    const updates = scene.tokens.map((tokenDoc) => ({
-      _id: tokenDoc.id,
-      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: this.getStripIndexForToken(tokenDoc),
-    }));
+    const updates = scene.tokens.map((tokenDoc) => ({ _id: tokenDoc.id, ...this.getPlacementChanges(tokenDoc, tokenDoc) }));
     await scene.updateEmbeddedDocuments("Token", updates);
   }
 
@@ -649,13 +715,16 @@ class VistaModule {
 
   /**
    * Locks the viewport to fit and center the scene in the area left of the sidebar.
+   * The GM's view also includes the backstage area.
    */
   lockViewport() {
     if (!this.isActive() || this.isPanLocking) return;
     this.debug("Locking viewport");
     this.isPanLocking = true;
 
-    const { sceneRect, scale: zoomLimits } = this.dimensions;
+    const { sceneRect: scene, scale: zoomLimits } = this.dimensions;
+    const backstage = game.user.isGM ? this.getBackstageBounds(VistaConfig.get(canvas.scene)) : null;
+    const sceneRect = new PIXI.Rectangle(scene.x, scene.y, scene.width + (backstage?.width ?? 0), scene.height);
     const sidebarLeft = document.getElementById("sidebar")?.getBoundingClientRect().left ?? window.innerWidth;
     const availableWidth = Math.min(sidebarLeft, window.innerWidth);
     const scale = Math.min(
@@ -682,17 +751,28 @@ class VistaModule {
     const config = VistaConfig.get(canvas.scene);
     const { stripCount } = config;
     const tokens = canvas.tokens?.placeables ?? [];
+    const onStage = tokens.filter((token) => !this.isBackstage(token.document, config));
     /** @type {Map<string, TokenTarget>} */
     const targets = new Map();
 
-    for (let i = 0; i < stripCount; i++) {
-      const sorted = this.getSortedTokensForStrip(tokens, i, stripCount);
-      if (!sorted.length) continue;
-
-      const bounds = this.getStripBounds(i, config);
+    /**
+     * @param {Token[]} sorted - The area's tokens in display order.
+     * @param {StripBounds} bounds - The area to lay them out in.
+     */
+    const layOut = (sorted, bounds) => {
       const sizes = sorted.map((token) => this.getTokenBaseSize(token.document));
       this.layoutStrip(sizes, bounds).forEach((target, index) => targets.set(sorted[index].id, target));
+    };
+
+    for (let i = 0; i < stripCount; i++) {
+      const sorted = this.getSortedTokensForStrip(onStage, i, stripCount);
+      if (sorted.length) layOut(sorted, this.getStripBounds(i, config));
     }
+
+    const backstage = this.getBackstageBounds(config);
+    const backstageTokens = tokens.filter((token) => this.isBackstage(token.document, config));
+    if (backstage && backstageTokens.length) layOut(this.sortTokens(backstageTokens), backstage);
+
     return targets;
   }
 
@@ -816,20 +896,28 @@ class VistaModule {
    * @returns {Token[]} Sorted array of tokens.
    */
   getSortedTokensForStrip(tokens, stripIndex, stripCount) {
+    const stripTokens = tokens.filter((t) => this.getTokenStrip(t.document, stripCount) === stripIndex);
+    return this.sortTokens(stripTokens);
+  }
+
+  /**
+   * Sorts tokens by combat turn (if active) or alphabetically, in place.
+   * @param {Token[]} tokens - Array of token placeables.
+   * @returns {Token[]} The sorted array.
+   */
+  sortTokens(tokens) {
     const combat = game.combat;
     const inCombat = combat?.started;
 
-    const stripTokens = tokens.filter((t) => this.getTokenStrip(t.document, stripCount) === stripIndex);
-
     if (!inCombat) {
-      stripTokens.sort((a, b) => (a.document.name ?? "").localeCompare(b.document.name ?? ""));
-      return stripTokens;
+      tokens.sort((a, b) => (a.document.name ?? "").localeCompare(b.document.name ?? ""));
+      return tokens;
     }
 
     const tokenIdToTurnIndex = new Map();
     combat.turns.forEach((turn, index) => tokenIdToTurnIndex.set(turn.tokenId, index));
 
-    stripTokens.sort((a, b) => {
+    tokens.sort((a, b) => {
       const turnIndexA = tokenIdToTurnIndex.get(a.id);
       const turnIndexB = tokenIdToTurnIndex.get(b.id);
       if (turnIndexA !== undefined && turnIndexB !== undefined) return turnIndexA - turnIndexB;
@@ -838,7 +926,7 @@ class VistaModule {
       return (a.document.name ?? "").localeCompare(b.document.name ?? "");
     });
 
-    return stripTokens;
+    return tokens;
   }
 
   /**
@@ -940,6 +1028,10 @@ class VistaModule {
         name: name(VistaConfig.FLAG_SIDE_BY_SIDE),
         value: flags.sideBySide,
       })),
+      group("VISTA.Backstage", "VISTA.BackstageHint", createCheckboxInput({
+        name: name(VistaConfig.FLAG_BACKSTAGE),
+        value: flags.backstage,
+      })),
       group("VISTA.StripLabels", "VISTA.StripLabelsHint", createTextInput({
         name: name(VistaConfig.FLAG_STRIP_LABELS),
         value: flags.stripLabels.join(", "),
@@ -968,16 +1060,25 @@ class VistaModule {
 
   /**
    * Pre-update handler for scene changes.
-   * Processes string input for labels into an array.
-   * @param {Scene} scene - The scene document.
-   * @param {object} updateData - The update data.
+   * Processes string input for labels into an array, and adds padding for a new backstage area.
+   * @param {Scene.Implementation} scene - The scene document.
+   * @param {Scene.UpdateData} updateData - The update data.
    */
   preUpdateScene(scene, updateData) {
+    const BACKSTAGE_PADDING = 0.1;
+
     const labelPath = `flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}`;
     const raw = foundry.utils.getProperty(updateData, labelPath);
     if (typeof raw === "string") {
       const arr = raw.split(",").map((s) => s.trim()).filter(Boolean);
       foundry.utils.setProperty(updateData, labelPath, arr);
+    }
+
+    // The backstage area lives in the scene's padding, so it needs some to exist.
+    const backstagePath = `flags.${VistaConfig.ID}.${VistaConfig.FLAG_BACKSTAGE}`;
+    const padding = updateData.padding ?? scene.padding;
+    if (foundry.utils.getProperty(updateData, backstagePath) === true && !padding) {
+      updateData.padding = BACKSTAGE_PADDING;
     }
   }
 }

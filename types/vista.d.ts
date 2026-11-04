@@ -26,11 +26,13 @@ declare module "fvtt-types/configuration" {
         padRight?: number;
         stripLinesVisible?: boolean;
         sideBySide?: boolean;
+        backstage?: boolean;
       };
     };
     Token: {
       vista: {
         stripIndex?: number;
+        inBackstage?: boolean;
       };
     };
   }
