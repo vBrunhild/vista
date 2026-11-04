@@ -76,7 +76,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
 
   async _draw() {
     this.overlayContainer = this.addChild(new PIXI.Container());
-    this.overlayContainer.label = "vista-strip-overlay";
+    this.overlayContainer.name = "vista-strip-overlay";
   }
 
   async _tearDown(options) {
