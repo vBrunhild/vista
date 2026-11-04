@@ -171,8 +171,11 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
  * Vista Module Logic
  */
 class VistaModule {
-  /** Token move animations use a fixed duration, as scaled-up tokens travel far at Foundry's default speed. */
-  static MOVE_ANIMATION_MS = 500;
+  // Token move animations use fixed durations, as scaled-up tokens travel far at Foundry's default speed.
+  /** Duration of the slide to where a token is dropped. */
+  static DROP_ANIMATION_MS = 250;
+  /** Duration of the slide into a token's place in its strip. */
+  static ARRANGE_ANIMATION_MS = 500;
 
   constructor() {
     this.isPanLocking = false;
@@ -495,7 +498,7 @@ class VistaModule {
   /**
    * Handler for the preMoveToken hook.
    * Prevents tokens from turning toward the drag direction, since strips have no facing,
-   * and shortens the move animation to match the arrangement's.
+   * and shortens the move animation to {@link VistaModule.DROP_ANIMATION_MS}.
    * @param {TokenDocument.Implementation} tokenDoc - The token document being moved.
    * @param {VistaMovement} movement - The pending movement.
    * @param {TokenDocument.Database.Update} operation - The update operation.
@@ -508,7 +511,7 @@ class VistaModule {
     const { origin, destination } = movement;
     const distance = Math.hypot(destination.x - origin.x, destination.y - origin.y) / this.dimensions.size;
     if (distance > 0) {
-      const movementSpeed = distance / (VistaModule.MOVE_ANIMATION_MS / 1000);
+      const movementSpeed = distance / (VistaModule.DROP_ANIMATION_MS / 1000);
       operation.animation = { ...operation.animation, movementSpeed };
     }
   }
@@ -866,7 +869,7 @@ class VistaModule {
     if (updates.length > 0) {
       this.debug(`Batch updating ${updates.length} tokens`);
       // Built apart from the call so TypeScript accepts the custom vistaArrangement option.
-      const options = { vistaArrangement: true, animation: { duration: VistaModule.MOVE_ANIMATION_MS } };
+      const options = { vistaArrangement: true, animation: { duration: VistaModule.ARRANGE_ANIMATION_MS } };
       await scene.updateEmbeddedDocuments("Token", updates, options);
     }
   }
