@@ -24,6 +24,13 @@
  */
 
 /**
+ * @typedef {Object} VistaMovement - The parts of a pending token movement Vista reads or changes.
+ * @property {boolean} autoRotate
+ * @property {{ x: number, y: number }} origin
+ * @property {{ x: number, y: number }} destination
+ */
+
+/**
  * @typedef {Object} TokenTarget - A token's position and size, such as where the layout places it.
  * @property {number} x - Left edge in pixels.
  * @property {number} y - Top edge in pixels.
@@ -164,6 +171,9 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
  * Vista Module Logic
  */
 class VistaModule {
+  /** Token move animations use a fixed duration, as scaled-up tokens travel far at Foundry's default speed. */
+  static MOVE_ANIMATION_MS = 500;
+
   constructor() {
     this.isPanLocking = false;
     this.arrangeTokensDebounced = foundry.utils.debounce(
@@ -359,8 +369,8 @@ class VistaModule {
       return this.preCreateToken(tokenDoc);
     });
 
-    Hooks.on("preMoveToken", (tokenDoc, movement) => {
-      this.preMoveToken(tokenDoc, movement);
+    Hooks.on("preMoveToken", (tokenDoc, movement, operation) => {
+      this.preMoveToken(tokenDoc, movement, operation);
     });
 
     Hooks.on("preUpdateScene", (scene, updateData) => {
@@ -484,13 +494,23 @@ class VistaModule {
 
   /**
    * Handler for the preMoveToken hook.
-   * Prevents tokens from turning toward the drag direction, since strips have no facing.
+   * Prevents tokens from turning toward the drag direction, since strips have no facing,
+   * and shortens the move animation to match the arrangement's.
    * @param {TokenDocument.Implementation} tokenDoc - The token document being moved.
-   * @param {{ autoRotate: boolean }} movement - The pending movement operation.
+   * @param {VistaMovement} movement - The pending movement.
+   * @param {TokenDocument.Database.Update} operation - The update operation.
    */
-  preMoveToken(tokenDoc, movement) {
+  preMoveToken(tokenDoc, movement, operation) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     movement.autoRotate = false;
+
+    // Foundry turns an animation duration into a speed before this hook runs, so set the speed directly.
+    const { origin, destination } = movement;
+    const distance = Math.hypot(destination.x - origin.x, destination.y - origin.y) / this.dimensions.size;
+    if (distance > 0) {
+      const movementSpeed = distance / (VistaModule.MOVE_ANIMATION_MS / 1000);
+      operation.animation = { ...operation.animation, movementSpeed };
+    }
   }
 
   /**
@@ -805,8 +825,6 @@ class VistaModule {
    * Main orchestrator function: Calculates layout, compares with current state, and applies updates.
    */
   async arrangeTokens() {
-    const ARRANGE_ANIMATION_MS = 250;
-
     const scene = canvas.scene;
     if (!scene || !this.isActive() || !game.users.activeGM?.isSelf) return;
 
@@ -847,9 +865,8 @@ class VistaModule {
 
     if (updates.length > 0) {
       this.debug(`Batch updating ${updates.length} tokens`);
-      // A fixed duration, as scaled-up tokens travel many grid units at the default movement speed.
       // Built apart from the call so TypeScript accepts the custom vistaArrangement option.
-      const options = { vistaArrangement: true, animation: { duration: ARRANGE_ANIMATION_MS } };
+      const options = { vistaArrangement: true, animation: { duration: VistaModule.MOVE_ANIMATION_MS } };
       await scene.updateEmbeddedDocuments("Token", updates, options);
     }
   }

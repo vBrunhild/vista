@@ -40,7 +40,12 @@ declare module "fvtt-types/configuration" {
     interface HookConfig {
       preMoveToken: (
         document: TokenDocument.Implementation,
-        movement: { autoRotate: boolean; showRuler: boolean },
+        movement: {
+          autoRotate: boolean;
+          showRuler: boolean;
+          readonly origin: { readonly x: number; readonly y: number };
+          readonly destination: { readonly x: number; readonly y: number };
+        },
         operation: TokenDocument.Database.Update,
       ) => boolean | void;
     }
