@@ -679,6 +679,8 @@ class VistaModule {
    * Main orchestrator function: Calculates layout, compares with current state, and applies updates.
    */
   async arrangeTokens() {
+    const ARRANGE_ANIMATION_MS = 250;
+
     if (!this.isActive() || !game.users.activeGM?.isSelf) return;
 
     const targets = this.calculateTokenTargets();
@@ -717,7 +719,11 @@ class VistaModule {
 
     if (updates.length > 0) {
       this.debug(`Batch updating ${updates.length} tokens`);
-      await canvas.scene.updateEmbeddedDocuments("Token", updates, { vistaArrangement: true });
+      // A fixed duration, as scaled-up tokens travel many grid units at the default movement speed.
+      await canvas.scene.updateEmbeddedDocuments("Token", updates, {
+        vistaArrangement: true,
+        animation: { duration: ARRANGE_ANIMATION_MS },
+      });
     }
   }
 
