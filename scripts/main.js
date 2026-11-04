@@ -131,7 +131,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
           fontFamily: "Signika",
           fontSize: 28,
           fill: "#ffffff",
-          strok: "#000000",
+          stroke: "#000000",
           strokeThickness: 3,
           dropShadow: true,
           dropShadowDistance: 2,
