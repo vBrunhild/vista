@@ -8,6 +8,7 @@
  * @property {boolean} stripLinesVisible - Toggle for line visibility.
  * @property {boolean} sideBySide - Whether strips are columns placed side by side instead of stacked rows.
  * @property {boolean} backstage - Whether the scene has a GM-only backstage area right of the scene.
+ * @property {string} background - Path of an image filling each viewer's whole view, or empty for none.
  */
 
 /**
@@ -58,6 +59,7 @@ class VistaConfig {
   /** @readonly */ static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
   /** @readonly */ static FLAG_SIDE_BY_SIDE = "sideBySide";
   /** @readonly */ static FLAG_BACKSTAGE = "backstage";
+  /** @readonly */ static FLAG_BACKGROUND = "background";
   /** @readonly */ static FLAG_TOKEN_BACKSTAGE = "inBackstage";
   /** @readonly */ static FLAG_TOKEN_STATUS = "status";
 
@@ -77,6 +79,7 @@ class VistaConfig {
         stripLinesVisible: true,
         sideBySide: false,
         backstage: false,
+        background: "",
       };
     }
 
@@ -90,7 +93,37 @@ class VistaConfig {
         ?? game.settings.get(this.ID, "defaultStripLinesVisible"),
       sideBySide: scene.getFlag(this.ID, this.FLAG_SIDE_BY_SIDE) ?? false,
       backstage: scene.getFlag(this.ID, this.FLAG_BACKSTAGE) ?? false,
+      background: scene.getFlag(this.ID, this.FLAG_BACKGROUND) ?? "",
     };
+  }
+}
+
+/**
+ * Canvas layer beneath the whole canvas, showing the Vista background image in the margins outside the
+ * canvas rectangle. Inside it, the primary group paints over this layer and draws its own copy.
+ */
+class VistaBackgroundLayer extends foundry.canvas.layers.CanvasLayer {
+  constructor() {
+    super();
+    /** @type {PIXI.Sprite | null} */
+    this.sprite = null;
+    // Plain canvas layers ignore the zIndex layer option, so it is set directly to sort below the environment.
+    this.zIndex = -100;
+  }
+
+  static get layerOptions() {
+    return foundry.utils.mergeObject(super.layerOptions, { name: "vistaBackground" });
+  }
+
+  async _draw() {
+    this.sprite = this.addChild(new PIXI.Sprite());
+    this.sprite.visible = false;
+  }
+
+  /** @param {NonNullable<Parameters<foundry.canvas.layers.CanvasLayer["tearDown"]>[0]>} options */
+  async _tearDown(options) {
+    this.sprite = null;
+    return super._tearDown(options);
   }
 }
 
@@ -234,6 +267,12 @@ class VistaModule {
     this.isPanLocking = false;
     /** @type {WeakMap<Token, foundry.canvas.containers.PreciseText>} */
     this.statusTexts = new WeakMap();
+    /** @type {PIXI.Texture | null} */
+    this.backgroundTexture = null;
+    /** @type {PIXI.Texture[]} */
+    this.backgroundCrops = [];
+    /** @type {foundry.canvas.primary.PrimarySpriteMesh | null} */
+    this.backgroundMesh = null;
     this.arrangeTokensDebounced = foundry.utils.debounce(
       this.arrangeTokens.bind(this), 50
     );
@@ -411,6 +450,7 @@ class VistaModule {
       if (!this.isActive()) return;
       this.lockViewport();
       for (const token of canvas.tokens?.placeables ?? []) this.refreshStatus(token);
+      this.refreshBackground();
       if (canvas.tokens?.hud.rendered) canvas.tokens.hud.setPosition();
     });
 
@@ -521,6 +561,14 @@ class VistaModule {
     return /** @type {{ vista?: VistaLayer }} */ (/** @type {unknown} */ (canvas)).vista;
   }
 
+  /**
+   * The Vista background layer, exposed as `canvas.vistaBackground` like {@link VistaModule#layer}.
+   * @returns {VistaBackgroundLayer | undefined}
+   */
+  get backgroundLayer() {
+    return /** @type {{ vistaBackground?: VistaBackgroundLayer }} */ (/** @type {unknown} */ (canvas)).vistaBackground;
+  }
+
   /** @param {...unknown} args */
   debug(...args) {
     if (game.settings.get(VistaConfig.ID, "debugMode")) {
@@ -535,6 +583,7 @@ class VistaModule {
    * Initializes overlay and token arrangement.
    */
   onCanvasReady() {
+    this.loadBackground();
     if (!this.isActive()) return;
     this.drawOverlay();
     this.lockViewport();
@@ -557,6 +606,7 @@ class VistaModule {
     this.drawOverlay();
     this.lockViewport();
     this.arrangeTokensDebounced();
+    this.loadBackground();
     for (const token of canvas.tokens?.placeables ?? []) token.renderFlags.set({ refreshState: true });
   }
 
@@ -769,6 +819,15 @@ class VistaModule {
   }
 
   /**
+   * The width of the screen left of the sidebar, which covers the right of the canvas.
+   * @returns {number}
+   */
+  getFreeScreenWidth() {
+    const sidebarLeft = document.getElementById("sidebar")?.getBoundingClientRect().left ?? window.innerWidth;
+    return Math.min(sidebarLeft, window.innerWidth);
+  }
+
+  /**
    * Locks the viewport to fit and center the scene in the area left of the sidebar.
    * The GM's view also includes the backstage area.
    */
@@ -780,8 +839,7 @@ class VistaModule {
     const { sceneRect: scene, scale: zoomLimits } = this.dimensions;
     const backstage = game.user.isGM ? this.getBackstageBounds(VistaConfig.get(canvas.scene)) : null;
     const sceneRect = new PIXI.Rectangle(scene.x, scene.y, scene.width + (backstage?.width ?? 0), scene.height);
-    const sidebarLeft = document.getElementById("sidebar")?.getBoundingClientRect().left ?? window.innerWidth;
-    const availableWidth = Math.min(sidebarLeft, window.innerWidth);
+    const availableWidth = this.getFreeScreenWidth();
     const scale = Math.min(
       availableWidth / sceneRect.width,
       window.innerHeight / sceneRect.height
@@ -1037,6 +1095,87 @@ class VistaModule {
   // ─── Visuals ───
 
   /**
+   * Loads the scene's background image, or clears it when the scene has none.
+   */
+  async loadBackground() {
+    const { enabled, background } = VistaConfig.get(canvas.scene);
+    const loaded = enabled && background ? await foundry.canvas.loadTexture(background) : null;
+    this.backgroundTexture = loaded instanceof PIXI.Texture ? loaded : null;
+    this.refreshBackground();
+  }
+
+  /**
+   * Fits the background image to the area this viewer sees, scaling it to cover the area without
+   * stretching. The mesh inside the canvas stops where the GM's backstage begins, so the backstage keeps
+   * the canvas's own dark color, while the layer beneath still fills the margins around it.
+   */
+  refreshBackground() {
+    const texture = this.backgroundTexture;
+    const mesh = this.getBackgroundMesh();
+    const sprite = this.backgroundLayer?.sprite;
+    const visible = !!texture && this.isActive();
+    for (const target of [mesh, sprite]) if (target) target.visible = visible;
+    if (!texture || !visible) return;
+
+    const area = this.getBackgroundArea();
+    const scale = Math.max(area.width / texture.width, area.height / texture.height);
+    // Where the texture's top left corner lands on the canvas once centered over the area.
+    const originX = area.x - (texture.width * scale - area.width) / 2;
+    const originY = area.y - (texture.height * scale - area.height) / 2;
+
+    const previousCrops = this.backgroundCrops;
+    this.backgroundCrops = [];
+    /**
+     * @param {PIXI.Sprite | foundry.canvas.primary.PrimarySpriteMesh | null | undefined} target - The sprite to place.
+     * @param {PIXI.Rectangle} rect - The canvas area it covers, within the background area.
+     */
+    const place = (target, rect) => {
+      if (!target) return;
+      const frame = new PIXI.Rectangle((rect.x - originX) / scale, (rect.y - originY) / scale, rect.width / scale, rect.height / scale);
+      const crop = new PIXI.Texture(texture.baseTexture, frame);
+      this.backgroundCrops.push(crop);
+      target.texture = crop;
+      target.position.set(rect.x, rect.y);
+      target.width = rect.width;
+      target.height = rect.height;
+    };
+
+    const backstage = game.user.isGM ? this.getBackstageBounds(VistaConfig.get(canvas.scene)) : null;
+    const meshArea = backstage ? new PIXI.Rectangle(area.x, area.y, backstage.x - area.x, area.height) : area;
+    place(sprite, area);
+    place(mesh, meshArea);
+    for (const crop of previousCrops) crop.destroy();
+  }
+
+  /**
+   * The background mesh in the primary group, which is recreated after each canvas draw tears it down.
+   * @returns {foundry.canvas.primary.PrimarySpriteMesh | null}
+   */
+  getBackgroundMesh() {
+    if (!canvas.primary) return null;
+    if (this.backgroundMesh && !this.backgroundMesh.destroyed) return this.backgroundMesh;
+
+    const mesh = new foundry.canvas.primary.PrimarySpriteMesh({ name: "vistaBackground" });
+    mesh.sortLayer = foundry.canvas.groups.PrimaryCanvasGroup.SORT_LAYERS.SCENE;
+    // Just above the scene's own background, which sorts at zIndex -Infinity.
+    mesh.zIndex = Number.MIN_SAFE_INTEGER;
+    this.backgroundMesh = canvas.primary.addChild(mesh);
+    return mesh;
+  }
+
+  /**
+   * The canvas area this viewer sees, including under the sidebar, whose tab buttons don't fully cover
+   * the canvas.
+   * @returns {PIXI.Rectangle}
+   */
+  getBackgroundArea() {
+    const stage = /** @type {PIXI.Container} */ (canvas.stage);
+    const topLeft = stage.toLocal(new PIXI.Point(0, 0));
+    const bottomRight = stage.toLocal(new PIXI.Point(window.innerWidth, window.innerHeight));
+    return new PIXI.Rectangle(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+  }
+
+  /**
    * Handler for the drawToken hook.
    * Adds the text object that shows the token's status line.
    * @param {Token} token - The drawn token.
@@ -1164,6 +1303,11 @@ class VistaModule {
         name: name(VistaConfig.FLAG_BACKSTAGE),
         value: flags.backstage,
       })),
+      group("VISTA.Background", "VISTA.BackgroundHint", foundry.applications.elements.HTMLFilePickerElement.create({
+        name: name(VistaConfig.FLAG_BACKGROUND),
+        value: flags.background,
+        type: "image",
+      })),
       group("VISTA.StripLabels", "VISTA.StripLabelsHint", createTextInput({
         name: name(VistaConfig.FLAG_STRIP_LABELS),
         value: flags.stripLabels.join(", "),
@@ -1220,6 +1364,10 @@ Hooks.once("init", () => {
   CONFIG.Canvas.layers.vista = {
     group: "interface",
     layerClass: VistaLayer
+  };
+  CONFIG.Canvas.layers.vistaBackground = {
+    group: "rendered",
+    layerClass: VistaBackgroundLayer
   };
 
   vista.init()
