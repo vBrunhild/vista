@@ -6,6 +6,7 @@
  * @property {number} padLeft - Left padding value.
  * @property {number} padRight - Right padding value.
  * @property {boolean} stripLinesVisible - Toggle for line visibility.
+ * @property {boolean} sideBySide - Whether strips are columns placed side by side instead of stacked rows.
  */
 
 /**
@@ -23,7 +24,7 @@
  */
 
 /**
- * @typedef {Object} TokenTarget - Where the layout places a token.
+ * @typedef {Object} TokenTarget - A token's position and size, such as where the layout places it.
  * @property {number} x - Left edge in pixels.
  * @property {number} y - Top edge in pixels.
  * @property {number} width - Width in grid units.
@@ -44,6 +45,7 @@ class VistaConfig {
   /** @readonly */ static FLAG_PAD_LEFT = "padLeft";
   /** @readonly */ static FLAG_PAD_RIGHT = "padRight";
   /** @readonly */ static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
+  /** @readonly */ static FLAG_SIDE_BY_SIDE = "sideBySide";
 
   /**
    * Retrieves sanitized configuration for a given scene.
@@ -59,6 +61,7 @@ class VistaConfig {
         padLeft: 0,
         padRight: 0,
         stripLinesVisible: true,
+        sideBySide: false,
       };
     }
 
@@ -70,6 +73,7 @@ class VistaConfig {
       padRight: scene.getFlag(this.ID, this.FLAG_PAD_RIGHT) ?? game.settings.get(this.ID, "defaultPadRight"),
       stripLinesVisible: scene.getFlag(this.ID, this.FLAG_STRIP_LINES_VISIBLE)
         ?? game.settings.get(this.ID, "defaultStripLinesVisible"),
+      sideBySide: scene.getFlag(this.ID, this.FLAG_SIDE_BY_SIDE) ?? false,
     };
   }
 }
@@ -115,9 +119,8 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
     const {
       stripCount,
       stripLabels,
-      padLeft,
-      padRight,
-      stripLinesVisible
+      stripLinesVisible,
+      sideBySide,
     } = config;
 
     const lineColor = foundry.utils.Color.from(game.settings.get(VistaConfig.ID, "lineColor")).valueOf();
@@ -127,13 +130,12 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
     const { sceneRect } = moduleInstance.dimensions;
 
     for (let i = 0; i < stripCount; i++) {
-      const bounds = moduleInstance.getStripBounds(i, stripCount, padLeft, padRight);
+      const bounds = moduleInstance.getStripBounds(i, config);
 
       if (i > 0 && stripLinesVisible) {
-        const line = new PIXI.Graphics()
-          .lineStyle(lineThickness, lineColor, lineOpacity)
-          .moveTo(sceneRect.x, bounds.y)
-          .lineTo(sceneRect.right, bounds.y);
+        const line = new PIXI.Graphics().lineStyle(lineThickness, lineColor, lineOpacity);
+        if (sideBySide) line.moveTo(bounds.x, sceneRect.y).lineTo(bounds.x, sceneRect.bottom);
+        else line.moveTo(sceneRect.x, bounds.y).lineTo(sceneRect.right, bounds.y);
 
         this.overlayContainer.addChild(line);
       }
@@ -472,7 +474,7 @@ class VistaModule {
    */
   preCreateToken(tokenDoc) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
-    const stripIndex = this.getStripIndexForToken(tokenDoc.y, tokenDoc.height);
+    const stripIndex = this.getStripIndexForToken(tokenDoc);
     // Pasted tokens carry their original's base size, while their width and height are already scaled.
     const baseSize = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BASE_SIZE)
       ?? { width: tokenDoc.width, height: tokenDoc.height };
@@ -504,8 +506,13 @@ class VistaModule {
   preUpdateToken(tokenDoc, changes, options) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene || this.isArrangement(options)) return;
 
-    if (typeof changes.y === "number") {
-      const stripIndex = this.getStripIndexForToken(changes.y, changes.height ?? tokenDoc.height);
+    if (typeof changes.x === "number" || typeof changes.y === "number") {
+      const stripIndex = this.getStripIndexForToken({
+        x: changes.x ?? tokenDoc.x,
+        y: changes.y ?? tokenDoc.y,
+        width: changes.width ?? tokenDoc.width,
+        height: changes.height ?? tokenDoc.height,
+      });
       foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
     }
 
@@ -530,36 +537,41 @@ class VistaModule {
   // ─── Core Logic ───
 
   /**
-   * Calculates the bounding box for a specific strip within the scene area.
+   * Calculates the bounding box for a specific strip within the padded scene area.
    * @param {number} stripIndex - The index of the strip.
-   * @param {number} stripCount - Total number of strips.
-   * @param {number} [padLeft=0] - Left padding.
-   * @param {number} [padRight=0] - Right padding.
+   * @param {VistaSceneConfig} config - The scene's Vista configuration.
    * @returns {StripBounds} The bounding box.
    */
-  getStripBounds(stripIndex, stripCount, padLeft = 0, padRight = 0) {
+  getStripBounds(stripIndex, { stripCount, padLeft, padRight, sideBySide }) {
     const { sceneRect } = this.dimensions;
-    const stripHeight = sceneRect.height / stripCount;
-    return {
+    const area = {
       x: sceneRect.x + padLeft,
-      y: sceneRect.y + stripIndex * stripHeight,
+      y: sceneRect.y,
       width: sceneRect.width - padLeft - padRight,
-      height: stripHeight,
+      height: sceneRect.height,
     };
+
+    if (sideBySide) {
+      const stripWidth = area.width / stripCount;
+      return { ...area, x: area.x + stripIndex * stripWidth, width: stripWidth };
+    }
+    const stripHeight = area.height / stripCount;
+    return { ...area, y: area.y + stripIndex * stripHeight, height: stripHeight };
   }
 
   /**
    * Determines which strip contains the center of a token.
-   * @param {number} y - The token's top Y-coordinate.
-   * @param {number} height - The token's height in grid units.
+   * @param {TokenTarget} token - The token's position and size.
    * @returns {number} The strip index.
    */
-  getStripIndexForToken(y, height) {
-    const { stripCount } = VistaConfig.get(canvas.scene);
-    const { sceneRect, size: gridSize } = this.dimensions;
-    const centerY = y + (height * gridSize) / 2;
-    const stripHeight = sceneRect.height / stripCount;
-    return Math.clamp(Math.floor((centerY - sceneRect.y) / stripHeight), 0, stripCount - 1);
+  getStripIndexForToken({ x, y, width, height }) {
+    const config = VistaConfig.get(canvas.scene);
+    const gridSize = this.dimensions.size;
+    const first = this.getStripBounds(0, config);
+    const offset = config.sideBySide
+      ? (x + (width * gridSize) / 2 - first.x) / first.width
+      : (y + (height * gridSize) / 2 - first.y) / first.height;
+    return Math.clamp(Math.floor(offset), 0, config.stripCount - 1);
   }
 
   /**
@@ -597,7 +609,7 @@ class VistaModule {
     if (!scene || !game.users.activeGM?.isSelf) return;
     const updates = scene.tokens.map((tokenDoc) => ({
       _id: tokenDoc.id,
-      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: this.getStripIndexForToken(tokenDoc.y, tokenDoc.height),
+      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: this.getStripIndexForToken(tokenDoc),
     }));
     await scene.updateEmbeddedDocuments("Token", updates);
   }
@@ -641,7 +653,8 @@ class VistaModule {
    * @returns {Map<string, TokenTarget>} Map of token ID to its target.
    */
   calculateTokenTargets() {
-    const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
+    const config = VistaConfig.get(canvas.scene);
+    const { stripCount } = config;
     const tokens = canvas.tokens?.placeables ?? [];
     /** @type {Map<string, TokenTarget>} */
     const targets = new Map();
@@ -650,7 +663,7 @@ class VistaModule {
       const sorted = this.getSortedTokensForStrip(tokens, i, stripCount);
       if (!sorted.length) continue;
 
-      const bounds = this.getStripBounds(i, stripCount, padLeft, padRight);
+      const bounds = this.getStripBounds(i, config);
       const sizes = sorted.map((token) => this.getTokenBaseSize(token.document));
       this.layoutStrip(sizes, bounds).forEach((target, index) => targets.set(sorted[index].id, target));
     }
@@ -899,6 +912,10 @@ class VistaModule {
         min: 1,
         max: 4,
         step: 1,
+      })),
+      group("VISTA.SideBySide", "VISTA.SideBySideHint", createCheckboxInput({
+        name: name(VistaConfig.FLAG_SIDE_BY_SIDE),
+        value: flags.sideBySide,
       })),
       group("VISTA.StripLabels", "VISTA.StripLabelsHint", createTextInput({
         name: name(VistaConfig.FLAG_STRIP_LABELS),

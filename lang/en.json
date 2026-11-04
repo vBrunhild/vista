@@ -4,6 +4,8 @@
   "VISTA.EnableStripsHint": "When enabled, this scene uses abstract strips instead of a battle map.",
   "VISTA.StripCount": "Number of Strips",
   "VISTA.StripCountHint": "How many horizontal strips to divide the scene into (1 to 4).",
+  "VISTA.SideBySide": "Place Strips Side by Side",
+  "VISTA.SideBySideHint": "Divide the scene into columns placed side by side instead of rows stacked on top of each other.",
   "VISTA.StripLabels": "Strip Labels (comma-separated)",
   "VISTA.StripLabelsHint": "Optional labels for each strip, e.g. 'Bar, Common Room, Stage'.",
   "VISTA.StripLabelsPlaceholder": "Bar, Common Room, Stage",

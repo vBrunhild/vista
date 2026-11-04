@@ -25,6 +25,7 @@ declare module "fvtt-types/configuration" {
         padLeft?: number;
         padRight?: number;
         stripLinesVisible?: boolean;
+        sideBySide?: boolean;
       };
     };
     Token: {
