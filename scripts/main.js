@@ -18,6 +18,10 @@
  */
 
 /**
+ * @typedef {NonNullable<typeof canvas.dimensions> & { scale: { min: number, max: number } }} CanvasDimensions
+ */
+
+/**
  * @typedef {Object} TokenSize - A token's size in grid units.
  * @property {number} width
  * @property {number} height
@@ -380,6 +384,12 @@ class VistaModule {
       return this.preUpdateScene(scene, updateData);
     });
 
+    Hooks.once("ready", () => {
+      const sidebar = document.getElementById("sidebar");
+      // Observing the size follows the sidebar as it animates, which the collapseSidebar hook fires before.
+      if (sidebar) new ResizeObserver(() => this.lockViewport()).observe(sidebar);
+    });
+
     Hooks.on("preUpdateToken", (tokenDoc, changes, options) => {
       return this.preUpdateToken(tokenDoc, changes, options);
     });
@@ -417,10 +427,11 @@ class VistaModule {
   /**
    * The drawn scene's canvas dimensions.
    * Strips are only laid out on a drawn scene, where the dimensions are always set.
-   * @returns {NonNullable<typeof canvas.dimensions>}
+   * fvtt-types omits the zoom limits Foundry stores in `scale`, so they are added to the type here.
+   * @returns {CanvasDimensions}
    */
   get dimensions() {
-    return /** @type {NonNullable<typeof canvas.dimensions>} */ (canvas.dimensions);
+    return /** @type {CanvasDimensions} */ (canvas.dimensions);
   }
 
   /**
@@ -637,20 +648,26 @@ class VistaModule {
   }
 
   /**
-   * Locks the viewport to center the scene.
+   * Locks the viewport to fit and center the scene in the area left of the sidebar.
    */
   lockViewport() {
     if (!this.isActive() || this.isPanLocking) return;
     this.debug("Locking viewport");
     this.isPanLocking = true;
 
-    const { sceneRect } = this.dimensions;
+    const { sceneRect, scale: zoomLimits } = this.dimensions;
+    const sidebarLeft = document.getElementById("sidebar")?.getBoundingClientRect().left ?? window.innerWidth;
+    const availableWidth = Math.min(sidebarLeft, window.innerWidth);
     const scale = Math.min(
-      window.innerWidth / sceneRect.width,
+      availableWidth / sceneRect.width,
       window.innerHeight / sceneRect.height
     );
+    // Foundry's minimum zoom fits the scene to the whole window, so it can't fit the area beside the sidebar.
+    zoomLimits.min = Math.min(zoomLimits.min, scale);
 
-    canvas.pan({ x: sceneRect.center.x, y: sceneRect.center.y, scale });
+    // canvas.pan centers on the whole window, so shift by half the covered width to center on the free area.
+    const coveredWidth = window.innerWidth - availableWidth;
+    canvas.pan({ x: sceneRect.center.x + coveredWidth / 2 / scale, y: sceneRect.center.y, scale });
     requestAnimationFrame(() => { this.isPanLocking = false; });
   }
 
