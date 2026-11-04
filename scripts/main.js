@@ -18,6 +18,7 @@ class VistaConfig {
   static FLAG_STRIP_COUNT = "stripCount";
   static FLAG_STRIP_LABELS = "stripLabels";
   static FLAG_TOKEN_STRIP = "stripIndex";
+  static FLAG_TOKEN_BASE_SIZE = "baseSize";
   static FLAG_PAD_LEFT = "padLeft";
   static FLAG_PAD_RIGHT = "padRight";
   static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
@@ -400,7 +401,7 @@ class VistaModule {
 
   /**
    * Handler for the updateToken hook.
-   * Re-arranges after a manual move so the token snaps into its strip slot.
+   * Re-arranges after a manual move or resize so the token snaps into its strip slot.
    * @param {TokenDocument} tokenDoc - The updated token document.
    * @param {object} changes - The changes applied.
    * @param {object} options - The update options.
@@ -408,19 +409,25 @@ class VistaModule {
   onUpdateToken(tokenDoc, changes, options) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     if (options.vistaArrangement) return;
-    if (!("x" in changes || "y" in changes)) return;
+    if (!["x", "y", "width", "height"].some((key) => key in changes)) return;
     this.arrangeTokensDebounced();
   }
 
   /**
    * Handler for the preCreateToken hook.
-   * Assigns the new token to the strip it was dropped on.
+   * Assigns the new token to the strip it was dropped on and records its unscaled size.
    * @param {TokenDocument} tokenDoc - The token document being created.
    */
   preCreateToken(tokenDoc) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     const stripIndex = this.getStripIndexForToken(tokenDoc.y, tokenDoc.height);
-    tokenDoc.updateSource({ [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: stripIndex });
+    // Pasted tokens carry their original's base size, while their width and height are already scaled.
+    const baseSize = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BASE_SIZE)
+      ?? { width: tokenDoc.width, height: tokenDoc.height };
+    tokenDoc.updateSource({
+      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: stripIndex,
+      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_BASE_SIZE}`]: baseSize,
+    });
   }
 
   /**
@@ -436,16 +443,27 @@ class VistaModule {
 
   /**
    * Handler for the preUpdateToken hook.
-   * Reassigns the strip in the same update as a manual move.
+   * Reassigns the strip after a manual move and the base size after a manual resize,
+   * in the same update as the change itself.
    * @param {TokenDocument} tokenDoc - The token document being updated.
    * @param {object} changes - The pending changes.
    * @param {object} options - The update options.
    */
   preUpdateToken(tokenDoc, changes, options) {
-    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
-    if (options.vistaArrangement || !("y" in changes)) return;
-    const stripIndex = this.getStripIndexForToken(changes.y, changes.height ?? tokenDoc.height);
-    foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene || options.vistaArrangement) return;
+
+    if ("y" in changes) {
+      const stripIndex = this.getStripIndexForToken(changes.y, changes.height ?? tokenDoc.height);
+      foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
+    }
+
+    if ("width" in changes || "height" in changes) {
+      const baseSize = this.getTokenBaseSize(tokenDoc);
+      foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_BASE_SIZE}`, {
+        width: changes.width ?? baseSize.width,
+        height: changes.height ?? baseSize.height,
+      });
+    }
   }
 
   // ─── Core Logic ───
@@ -494,6 +512,20 @@ class VistaModule {
   getTokenStrip(tokenDoc, stripCount) {
     const assigned = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP) ?? 0;
     return Math.min(assigned, stripCount - 1);
+  }
+
+  /**
+   * Retrieves a token's unscaled size in grid units.
+   * Tokens placed before Vista recorded it fall back to their actor's prototype size,
+   * since their current size has already been overwritten by the layout.
+   * @param {TokenDocument} tokenDoc - The token document.
+   * @returns {{width: number, height: number}} The base size.
+   */
+  getTokenBaseSize(tokenDoc) {
+    const stored = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BASE_SIZE);
+    if (stored) return stored;
+    const prototype = tokenDoc.actor?.prototypeToken;
+    return { width: prototype?.width ?? 1, height: prototype?.height ?? 1 };
   }
 
   /**
