@@ -541,20 +541,21 @@ class VistaModule {
 
       const baseTokensPerRow = Math.floor(sorted.length / rowCount);
       const extraTokens = sorted.length % rowCount;
+      const rowLength = (row) => baseTokensPerRow + (row < extraTokens ? 1 : 0);
       const totalRowsHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
 
       let currentY = bounds.y + (bounds.height - totalRowsHeight) / 2;
       let tokenIndex = 0;
 
       for (let row = 0; row < rowCount; row++) {
-        const tokensInThisRow = row < extraTokens ? baseTokensPerRow + 1 : baseTokensPerRow;
-        const isOddRow = row % 2 === 1;
-        const isOddLenInRow = sorted.length % 2 === 1;
+        const tokensInThisRow = rowLength(row);
         const rowWidth = tokensInThisRow * scaledSize + (tokensInThisRow - 1) * TOKEN_PADDING;
+        const freeSpace = (bounds.width - rowWidth) / 2;
 
-        let startX = bounds.x + (bounds.width - rowWidth) / 2;
-        if (isOddRow && !isOddLenInRow) {
-          startX += (scaledSize + TOKEN_PADDING) * ROW_OFFSET_RATIO;
+        let startX = bounds.x + freeSpace;
+        // Rows of unequal length are already staggered by centering.
+        if (row % 2 === 1 && tokensInThisRow === rowLength(row - 1)) {
+          startX += Math.min((scaledSize + TOKEN_PADDING) * ROW_OFFSET_RATIO, freeSpace);
         }
 
         for (let col = 0; col < tokensInThisRow; col++) {
