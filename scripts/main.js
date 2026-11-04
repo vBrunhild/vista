@@ -380,16 +380,9 @@ class VistaModule {
    * @param {Scene} scene - The updated scene.
    * @param {object} changes - The changes applied.
    */
-  async onUpdateScene(scene, changes) {
+  onUpdateScene(scene, changes) {
     if (scene.id !== canvas.scene?.id) return;
     if (!foundry.utils.hasProperty(changes, `flags.${VistaConfig.ID}`)) return;
-
-    if (foundry.utils.hasProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_COUNT}`)) {
-      const newCount = VistaConfig.get(scene).stripCount;
-      await this.redistributeStrips(newCount);
-      this.lockViewport();
-      return;
-    }
 
     this.drawOverlay();
     this.lockViewport();
@@ -494,32 +487,16 @@ class VistaModule {
   }
 
   /**
-   * Redistributes tokens when the strip count changes.
-   * Moves tokens from deleted strips to the last valid strip.
-   * @param {number} newCount - The new number of strips.
+   * Retrieves the strip a token is assigned to.
+   * The stored index is clamped rather than rewritten when strips are removed,
+   * so tokens return to their original strip if the count is raised again.
+   * @param {TokenDocument} tokenDoc - The token document.
+   * @param {number} stripCount - Total number of strips.
+   * @returns {number} The strip index.
    */
-  async redistributeStrips(newCount) {
-    if (!game.users.activeGM?.isSelf) return;
-
-    const tokens = canvas.tokens.placeables;
-    let movedCount = 0;
-    for (const token of tokens) {
-      const currentStrip = token.document.getFlag(
-        VistaConfig.ID,
-        VistaConfig.FLAG_TOKEN_STRIP
-      ) ?? 0;
-      if (currentStrip >= newCount) {
-        await token.document.setFlag(
-          VistaConfig.ID,
-          VistaConfig.FLAG_TOKEN_STRIP,
-          newCount - 1
-        );
-        movedCount++;
-      }
-    }
-    this.debug(`Redistribution complete: ${movedCount} tokens moved`);
-    this.drawOverlay();
-    this.arrangeTokensDebounced();
+  getTokenStrip(tokenDoc, stripCount) {
+    const assigned = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP) ?? 0;
+    return Math.min(assigned, stripCount - 1);
   }
 
   /**
@@ -579,7 +556,7 @@ class VistaModule {
     const ROW_OFFSET_RATIO = 0.5;
 
     for (let i = 0; i < stripCount; i++) {
-      const sorted = this.getSortedTokensForStrip(tokens, i);
+      const sorted = this.getSortedTokensForStrip(tokens, i, stripCount);
       if (!sorted.length) continue;
 
       const bounds = this.getStripBounds(
@@ -674,16 +651,14 @@ class VistaModule {
    * Sorting is based on combat turn (if active) or alphabetical order.
    * @param {Token[]} tokens - Array of token placeables.
    * @param {number} stripIndex - The strip index.
+   * @param {number} stripCount - Total number of strips.
    * @returns {Token[]} Sorted array of tokens.
    */
-  getSortedTokensForStrip(tokens, stripIndex) {
+  getSortedTokensForStrip(tokens, stripIndex, stripCount) {
     const combat = game.combat;
     const inCombat = combat?.started;
 
-    const stripTokens = tokens.filter((t) => {
-      const assigned = t.document.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP) ?? 0;
-      return assigned === stripIndex;
-    });
+    const stripTokens = tokens.filter((t) => this.getTokenStrip(t.document, stripCount) === stripIndex);
 
     if (!inCombat) {
       stripTokens.sort((a, b) => (a.document.name ?? "").localeCompare(b.document.name ?? ""));
