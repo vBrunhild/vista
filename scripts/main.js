@@ -9,23 +9,45 @@
  */
 
 /**
+ * @typedef {Object} StripBounds - A strip's area on the canvas, in pixels.
+ * @property {number} x
+ * @property {number} y
+ * @property {number} width
+ * @property {number} height
+ */
+
+/**
+ * @typedef {Object} TokenSize - A token's size in grid units.
+ * @property {number} width
+ * @property {number} height
+ */
+
+/**
+ * @typedef {Object} TokenTarget - Where the layout places a token.
+ * @property {number} x - Left edge in pixels.
+ * @property {number} y - Top edge in pixels.
+ * @property {number} width - Width in grid units.
+ * @property {number} height - Height in grid units.
+ */
+
+/**
  * Vista Module Configuration
  * Manages module settings and scene flags.
  */
 class VistaConfig {
-  static ID = "vista";
-  static FLAG_ENABLED = "enabled";
-  static FLAG_STRIP_COUNT = "stripCount";
-  static FLAG_STRIP_LABELS = "stripLabels";
-  static FLAG_TOKEN_STRIP = "stripIndex";
-  static FLAG_TOKEN_BASE_SIZE = "baseSize";
-  static FLAG_PAD_LEFT = "padLeft";
-  static FLAG_PAD_RIGHT = "padRight";
-  static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
+  /** @readonly */ static ID = "vista";
+  /** @readonly */ static FLAG_ENABLED = "enabled";
+  /** @readonly */ static FLAG_STRIP_COUNT = "stripCount";
+  /** @readonly */ static FLAG_STRIP_LABELS = "stripLabels";
+  /** @readonly */ static FLAG_TOKEN_STRIP = "stripIndex";
+  /** @readonly */ static FLAG_TOKEN_BASE_SIZE = "baseSize";
+  /** @readonly */ static FLAG_PAD_LEFT = "padLeft";
+  /** @readonly */ static FLAG_PAD_RIGHT = "padRight";
+  /** @readonly */ static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
 
   /**
    * Retrieves sanitized configuration for a given scene.
-   * @param {Scene} scene - The scene document.
+   * @param {Scene.Implementation | null} scene - The scene document.
    * @returns {VistaSceneConfig} The configuration object.
    */
   static get(scene) {
@@ -40,21 +62,14 @@ class VistaConfig {
       };
     }
 
-    /** @type {<T>(key: string, fallback: T) => T} */
-    const getFlag = (key, fallback) => scene.getFlag(this.ID, key) ?? fallback;
-    /** @type {<T>(key: string) => T} */
-    const getSetting = (key) => game.settings.get(this.ID, key);
-
     return {
-      enabled: getFlag(this.FLAG_ENABLED, false),
-      stripCount: Math.clamp(getFlag(this.FLAG_STRIP_COUNT, 2), 1, 4),
-      stripLabels: getFlag(this.FLAG_STRIP_LABELS, []),
-      padLeft: getFlag(this.FLAG_PAD_LEFT, getSetting("defaultPadLeft")),
-      padRight: getFlag(this.FLAG_PAD_RIGHT, getSetting("defaultPadRight")),
-      stripLinesVisible: getFlag(
-        this.FLAG_STRIP_LINES_VISIBLE,
-        getSetting("defaultStripLinesVisible")
-      ),
+      enabled: scene.getFlag(this.ID, this.FLAG_ENABLED) ?? false,
+      stripCount: Math.clamp(scene.getFlag(this.ID, this.FLAG_STRIP_COUNT) ?? 2, 1, 4),
+      stripLabels: scene.getFlag(this.ID, this.FLAG_STRIP_LABELS) ?? [],
+      padLeft: scene.getFlag(this.ID, this.FLAG_PAD_LEFT) ?? game.settings.get(this.ID, "defaultPadLeft"),
+      padRight: scene.getFlag(this.ID, this.FLAG_PAD_RIGHT) ?? game.settings.get(this.ID, "defaultPadRight"),
+      stripLinesVisible: scene.getFlag(this.ID, this.FLAG_STRIP_LINES_VISIBLE)
+        ?? game.settings.get(this.ID, "defaultStripLinesVisible"),
     };
   }
 }
@@ -65,6 +80,7 @@ class VistaConfig {
 class VistaLayer extends foundry.canvas.layers.CanvasLayer {
   constructor () {
     super();
+    /** @type {PIXI.Container | null} */
     this.overlayContainer = null;
   }
 
@@ -80,6 +96,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
     this.overlayContainer.name = "vista-strip-overlay";
   }
 
+  /** @param {NonNullable<Parameters<foundry.canvas.layers.CanvasLayer["tearDown"]>[0]>} options */
   async _tearDown(options) {
     this.overlayContainer = null;
     return super._tearDown(options);
@@ -107,7 +124,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
     const lineThickness = game.settings.get(VistaConfig.ID, "lineThickness");
     const lineOpacity = game.settings.get(VistaConfig.ID, "lineOpacity");
 
-    const { sceneRect } = canvas.dimensions;
+    const { sceneRect } = moduleInstance.dimensions;
 
     for (let i = 0; i < stripCount; i++) {
       const bounds = moduleInstance.getStripBounds(i, stripCount, padLeft, padRight);
@@ -184,8 +201,7 @@ class VistaModule {
       hint: "VISTA.LineColorHint",
       scope,
       config,
-      type: new foundry.data.fields.ColorField({ nullable: false }),
-      default: "#000000",
+      type: new foundry.data.fields.ColorField({ nullable: false, initial: "#000000" }),
       onChange: () => {
         if (canvas.scene && this.isActive()) this.drawOverlay();
       },
@@ -249,42 +265,47 @@ class VistaModule {
    * Registers keybindings for strip manipulation.
    */
   registerKeybindings() {
+    const { SHIFT } = foundry.helpers.interaction.KeyboardManager.MODIFIER_KEYS;
+
     game.keybindings.register(VistaConfig.ID, "addStrip", {
       name: "VISTA.AddStrip",
       hint: "VISTA.AddStripHint",
-      editable: [{ key: "BracketRight", modifiers: ["Shift"] }],
+      editable: [{ key: "BracketRight", modifiers: [SHIFT] }],
       restricted: true,
-      onDown: async () => {
-        if (!this.isActive()) return;
+      onDown: () => {
+        if (!this.isActive()) return false;
         const currentCount = VistaConfig.get(canvas.scene).stripCount;
-        if (currentCount < 4) await this.updateStripsCount(currentCount + 1);
+        if (currentCount < 4) this.updateStripsCount(currentCount + 1);
         else ui.notifications.warn("VISTA.MaxStripsReached", { localize: true });
+        return true;
       },
     });
 
     game.keybindings.register(VistaConfig.ID, "removeStrip", {
       name: "VISTA.RemoveStrip",
       hint: "VISTA.RemoveStripHint",
-      editable: [{ key: "BracketLeft", modifiers: ["Shift"] }],
+      editable: [{ key: "BracketLeft", modifiers: [SHIFT] }],
       restricted: true,
-      onDown: async () => {
-        if (!this.isActive()) return;
+      onDown: () => {
+        if (!this.isActive()) return false;
         const currentCount = VistaConfig.get(canvas.scene).stripCount;
-        if (currentCount > 1) await this.updateStripsCount(currentCount - 1);
+        if (currentCount > 1) this.updateStripsCount(currentCount - 1);
         else ui.notifications.warn("VISTA.MinStripsReached", { localize: true });
+        return true;
       },
     });
 
     game.keybindings.register(VistaConfig.ID, "toggleStripLines", {
       name: "VISTA.ToggleStripLines",
       hint: "VISTA.ToggleStripLinesHint",
-      editable: [{ key: "Backslash", modifiers: ["Shift"] }],
+      editable: [{ key: "Backslash", modifiers: [SHIFT] }],
       restricted: true,
-      onDown: async () => {
-        if (!this.isActive()) return;
+      onDown: () => {
         const scene = canvas.scene;
+        if (!scene || !this.isActive()) return false;
         const current = VistaConfig.get(scene).stripLinesVisible;
-        await scene.setFlag(VistaConfig.ID, VistaConfig.FLAG_STRIP_LINES_VISIBLE, !current);
+        scene.setFlag(VistaConfig.ID, VistaConfig.FLAG_STRIP_LINES_VISIBLE, !current);
+        return true;
       },
     });
   }
@@ -362,6 +383,25 @@ class VistaModule {
     return VistaConfig.get(canvas.scene).enabled;
   }
 
+  /**
+   * The drawn scene's canvas dimensions.
+   * Strips are only laid out on a drawn scene, where the dimensions are always set.
+   * @returns {NonNullable<typeof canvas.dimensions>}
+   */
+  get dimensions() {
+    return /** @type {NonNullable<typeof canvas.dimensions>} */ (canvas.dimensions);
+  }
+
+  /**
+   * The Vista canvas layer, which Foundry exposes as `canvas.vista` once the canvas is drawn.
+   * fvtt-types cannot be extended with custom canvas layer properties, hence the cast.
+   * @returns {VistaLayer | undefined}
+   */
+  get layer() {
+    return /** @type {{ vista?: VistaLayer }} */ (/** @type {unknown} */ (canvas)).vista;
+  }
+
+  /** @param {...unknown} args */
   debug(...args) {
     if (game.settings.get(VistaConfig.ID, "debugMode")) {
       console.log(`[Vista Debug]`, ...args);
@@ -384,8 +424,8 @@ class VistaModule {
   /**
    * Handler for the updateScene hook.
    * Responds to changes in scene flags.
-   * @param {Scene} scene - The updated scene.
-   * @param {object} changes - The changes applied.
+   * @param {Scene.Implementation} scene - The updated scene.
+   * @param {Scene.UpdateData} changes - The changes applied.
    */
   async onUpdateScene(scene, changes) {
     if (scene.id !== canvas.scene?.id) return;
@@ -402,13 +442,13 @@ class VistaModule {
   /**
    * Handler for the updateToken hook.
    * Re-arranges after a manual move or resize so the token snaps into its strip slot.
-   * @param {TokenDocument} tokenDoc - The updated token document.
-   * @param {object} changes - The changes applied.
-   * @param {object} options - The update options.
+   * @param {TokenDocument.Implementation} tokenDoc - The updated token document.
+   * @param {TokenDocument.UpdateData} changes - The changes applied.
+   * @param {TokenDocument.Database.OnUpdateOptions} options - The update options.
    */
   onUpdateToken(tokenDoc, changes, options) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
-    if (options.vistaArrangement) return;
+    if (this.isArrangement(options)) return;
     if (!["x", "y", "width", "height"].some((key) => key in changes)) return;
     this.arrangeTokensDebounced();
   }
@@ -416,7 +456,7 @@ class VistaModule {
   /**
    * Handler for the preCreateToken hook.
    * Assigns the new token to the strip it was dropped on and records its unscaled size.
-   * @param {TokenDocument} tokenDoc - The token document being created.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document being created.
    */
   preCreateToken(tokenDoc) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
@@ -433,8 +473,8 @@ class VistaModule {
   /**
    * Handler for the preMoveToken hook.
    * Prevents tokens from turning toward the drag direction, since strips have no facing.
-   * @param {TokenDocument} tokenDoc - The token document being moved.
-   * @param {object} movement - The pending movement operation.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document being moved.
+   * @param {{ autoRotate: boolean }} movement - The pending movement operation.
    */
   preMoveToken(tokenDoc, movement) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
@@ -445,14 +485,14 @@ class VistaModule {
    * Handler for the preUpdateToken hook.
    * Reassigns the strip after a manual move and the base size after a manual resize,
    * in the same update as the change itself.
-   * @param {TokenDocument} tokenDoc - The token document being updated.
-   * @param {object} changes - The pending changes.
-   * @param {object} options - The update options.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document being updated.
+   * @param {TokenDocument.UpdateData} changes - The pending changes.
+   * @param {TokenDocument.Database.PreUpdateOptions} options - The update options.
    */
   preUpdateToken(tokenDoc, changes, options) {
-    if (!this.isActive() || tokenDoc.parent !== canvas.scene || options.vistaArrangement) return;
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene || this.isArrangement(options)) return;
 
-    if ("y" in changes) {
+    if (typeof changes.y === "number") {
       const stripIndex = this.getStripIndexForToken(changes.y, changes.height ?? tokenDoc.height);
       foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
     }
@@ -466,6 +506,15 @@ class VistaModule {
     }
   }
 
+  /**
+   * Whether an update was made by Vista's own token arrangement.
+   * @param {object} options - The update options.
+   * @returns {boolean}
+   */
+  isArrangement(options) {
+    return "vistaArrangement" in options && options.vistaArrangement === true;
+  }
+
   // ─── Core Logic ───
 
   /**
@@ -474,10 +523,10 @@ class VistaModule {
    * @param {number} stripCount - Total number of strips.
    * @param {number} [padLeft=0] - Left padding.
    * @param {number} [padRight=0] - Right padding.
-   * @returns {object} The bounding box {x, y, width, height}.
+   * @returns {StripBounds} The bounding box.
    */
   getStripBounds(stripIndex, stripCount, padLeft = 0, padRight = 0) {
-    const { sceneRect } = canvas.dimensions;
+    const { sceneRect } = this.dimensions;
     const stripHeight = sceneRect.height / stripCount;
     return {
       x: sceneRect.x + padLeft,
@@ -495,8 +544,8 @@ class VistaModule {
    */
   getStripIndexForToken(y, height) {
     const { stripCount } = VistaConfig.get(canvas.scene);
-    const { sceneRect } = canvas.dimensions;
-    const centerY = y + (height * canvas.grid.size) / 2;
+    const { sceneRect, size: gridSize } = this.dimensions;
+    const centerY = y + (height * gridSize) / 2;
     const stripHeight = sceneRect.height / stripCount;
     return Math.clamp(Math.floor((centerY - sceneRect.y) / stripHeight), 0, stripCount - 1);
   }
@@ -505,7 +554,7 @@ class VistaModule {
    * Retrieves the strip a token is assigned to.
    * The stored index is clamped rather than rewritten when strips are removed,
    * so tokens return to their original strip if the count is raised again.
-   * @param {TokenDocument} tokenDoc - The token document.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document.
    * @param {number} stripCount - Total number of strips.
    * @returns {number} The strip index.
    */
@@ -518,8 +567,8 @@ class VistaModule {
    * Retrieves a token's unscaled size in grid units.
    * Tokens placed before Vista recorded it fall back to their actor's prototype size,
    * since their current size has already been overwritten by the layout.
-   * @param {TokenDocument} tokenDoc - The token document.
-   * @returns {{width: number, height: number}} The base size.
+   * @param {TokenDocument.Implementation} tokenDoc - The token document.
+   * @returns {TokenSize} The base size.
    */
   getTokenBaseSize(tokenDoc) {
     const stored = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_BASE_SIZE);
@@ -532,12 +581,13 @@ class VistaModule {
    * Assigns every token in the scene to the strip under its current position.
    */
   async assignStripsFromPositions() {
-    if (!game.users.activeGM?.isSelf) return;
-    const updates = canvas.scene.tokens.map((tokenDoc) => ({
+    const scene = canvas.scene;
+    if (!scene || !game.users.activeGM?.isSelf) return;
+    const updates = scene.tokens.map((tokenDoc) => ({
       _id: tokenDoc.id,
       [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: this.getStripIndexForToken(tokenDoc.y, tokenDoc.height),
     }));
-    await canvas.scene.updateEmbeddedDocuments("Token", updates);
+    await scene.updateEmbeddedDocuments("Token", updates);
   }
 
   /**
@@ -561,7 +611,7 @@ class VistaModule {
     this.debug("Locking viewport");
     this.isPanLocking = true;
 
-    const { sceneRect } = canvas.dimensions;
+    const { sceneRect } = this.dimensions;
     const scale = Math.min(
       window.innerWidth / sceneRect.width,
       window.innerHeight / sceneRect.height
@@ -576,11 +626,12 @@ class VistaModule {
   /**
    * Calculates the target layout for all tokens in the scene.
    * Separates layout logic from document update logic.
-   * @returns {Map<string, object>} Map of token ID to target properties {x, y, width, height}.
+   * @returns {Map<string, TokenTarget>} Map of token ID to its target.
    */
   calculateTokenTargets() {
     const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
-    const tokens = canvas.tokens.placeables;
+    const tokens = canvas.tokens?.placeables ?? [];
+    /** @type {Map<string, TokenTarget>} */
     const targets = new Map();
 
     for (let i = 0; i < stripCount; i++) {
@@ -597,9 +648,9 @@ class VistaModule {
   /**
    * Lays out a strip's tokens in centered rows at the largest uniform scale that fits,
    * so tokens keep their sizes relative to each other.
-   * @param {{width: number, height: number}[]} sizes - Unscaled token sizes in grid units.
-   * @param {object} stripBounds - Bounding box of the strip.
-   * @returns {object[]} Target properties {x, y, width, height} for each token, in input order.
+   * @param {TokenSize[]} sizes - Unscaled token sizes.
+   * @param {StripBounds} stripBounds - Bounding box of the strip.
+   * @returns {TokenTarget[]} The target of each token, in input order.
    */
   layoutStrip(sizes, stripBounds) {
     const TOKEN_PADDING = 5;
@@ -610,12 +661,13 @@ class VistaModule {
 
     const availableWidth = stripBounds.width - STRIP_PADDING * 2;
     const availableHeight = stripBounds.height - TOKEN_PADDING * 2;
-    const gridSize = canvas.grid.size;
+    const gridSize = this.dimensions.size;
 
-    const widthsAt = (scale) => sizes.map((size) => size.width * scale * gridSize);
-    const rowHeightsAt = (rows, scale) => rows.map((row) => Math.max(...row.map((i) => sizes[i].height)) * scale * gridSize);
-    const totalHeight = (rowHeights) => rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * TOKEN_PADDING;
-    const fits = (scale) => {
+    const widthsAt = (/** @type {number} */ scale) => sizes.map((size) => size.width * scale * gridSize);
+    const rowHeightsAt = (/** @type {number[][]} */ rows, /** @type {number} */ scale) =>
+      rows.map((row) => Math.max(...row.map((i) => sizes[i].height)) * scale * gridSize);
+    const totalHeight = (/** @type {number[]} */ rowHeights) => rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * TOKEN_PADDING;
+    const fits = (/** @type {number} */ scale) => {
       const widths = widthsAt(scale);
       if (Math.max(...widths) > availableWidth) return false;
       const rows = this.packRows(widths, availableWidth, TOKEN_PADDING);
@@ -650,6 +702,7 @@ class VistaModule {
     if (totalHeight(rowHeightsAt(balanced, scale)) <= availableHeight) rows = balanced;
 
     const rowHeights = rowHeightsAt(rows, scale);
+    /** @type {TokenTarget[]} */
     const targets = [];
     let rowTop = stripBounds.y + (stripBounds.height - totalHeight(rowHeights)) / 2;
 
@@ -682,7 +735,9 @@ class VistaModule {
    * @returns {number[][]} Token indices for each row.
    */
   packRows(widths, maxWidth, gap) {
+    /** @type {number[][]} */
     const rows = [];
+    /** @type {number[]} */
     let row = [];
     let rowWidth = 0;
 
@@ -741,16 +796,18 @@ class VistaModule {
   async arrangeTokens() {
     const ARRANGE_ANIMATION_MS = 250;
 
-    if (!this.isActive() || !game.users.activeGM?.isSelf) return;
+    const scene = canvas.scene;
+    if (!scene || !this.isActive() || !game.users.activeGM?.isSelf) return;
 
     const targets = this.calculateTokenTargets();
     const updates = [];
-    const tokens = canvas.tokens.placeables;
+    const tokens = canvas.tokens?.placeables ?? [];
 
     for (const token of tokens) {
       const target = targets.get(token.id);
       if (!target) continue;
 
+      /** @type {Partial<TokenTarget> & { _id?: string }} */
       const tokenUpdates = {};
       let hasChanges = false;
 
@@ -780,10 +837,9 @@ class VistaModule {
     if (updates.length > 0) {
       this.debug(`Batch updating ${updates.length} tokens`);
       // A fixed duration, as scaled-up tokens travel many grid units at the default movement speed.
-      await canvas.scene.updateEmbeddedDocuments("Token", updates, {
-        vistaArrangement: true,
-        animation: { duration: ARRANGE_ANIMATION_MS },
-      });
+      // Built apart from the call so TypeScript accepts the custom vistaArrangement option.
+      const options = { vistaArrangement: true, animation: { duration: ARRANGE_ANIMATION_MS } };
+      await scene.updateEmbeddedDocuments("Token", updates, options);
     }
   }
 
@@ -793,15 +849,15 @@ class VistaModule {
    * Draws the overlay lines and labels.
    */
   drawOverlay() {
-    if (!canvas?.ready || !canvas.vista) return;
+    if (!canvas?.ready) return;
 
     const config = VistaConfig.get(canvas.scene);
-    canvas.vista.renderStrips(config, this);
+    this.layer?.renderStrips(config, this);
   }
 
   /**
    * Injects the Vista settings into the Scene Configuration dialog.
-   * @param {FormApplication} app - The app instance.
+   * @param {foundry.applications.sheets.SceneConfig} app - The app instance.
    * @param {HTMLElement} html - The HTML content.
    */
   injectSceneConfig(app, html) {
@@ -853,7 +909,7 @@ class VistaModule {
       const target = html.querySelector('button[type="submit"]');
       if (target) {
         const insertPoint = target.closest(".form-group, .sheet-footer") ?? target.parentElement;
-        insertPoint.insertAdjacentHTML("beforebegin", section);
+        insertPoint?.insertAdjacentHTML("beforebegin", section);
       }
     }
     app.setPosition({ height: "auto" });
