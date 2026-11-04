@@ -20,6 +20,7 @@
         default = pkgs.mkShell {
           buildInputs = [
             pkgs.eslint_d
+            pkgs.nodejs
             pkgs.prettierd
             pkgs.typescript-language-server
           ];
