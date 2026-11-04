@@ -711,11 +711,14 @@ class VistaModule {
    * @param {object} data - The data object.
    */
   injectSceneConfig(app, html, data) {
+    // Partial re-renders keep untouched parts, which may already hold the section.
+    if (html.querySelector(".vista-config")) return;
+
     const scene = app.document;
     const flags = VistaConfig.get(scene);
 
     const section = `
-    <fieldset>
+    <fieldset class="vista-config">
       <legend><i class="fas fa-theater-masks"></i> ${game.i18n.localize("VISTA.Settings")}</legend>
       <div class="form-group">
         <label>${game.i18n.localize("VISTA.EnableStrips")}</label>
