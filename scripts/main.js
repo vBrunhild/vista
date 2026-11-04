@@ -199,6 +199,28 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
 }
 
 /**
+ * Extends a token HUD class so its controls keep their normal size on Vista scenes,
+ * where the canvas is zoomed far out to fit the scaled-up tokens.
+ * @param {typeof foundry.applications.hud.TokenHUD} Base - The configured token HUD class.
+ */
+function VistaTokenHUDMixin(Base) {
+  return class VistaTokenHUD extends Base {
+    /** @param {foundry.applications.api.ApplicationV2.Position} position */
+    _updatePosition(position) {
+      const updated = super._updatePosition(position);
+      if (!VistaConfig.get(canvas.scene).enabled) return updated;
+
+      // The HUD container is scaled with the canvas zoom, so scale this HUD by the inverse, shrinking
+      // its box to match so it still covers the token.
+      const baseScale = updated.scale ?? 1;
+      const scale = baseScale / (canvas.stage?.scale.x ?? 1);
+      const ratio = baseScale / scale;
+      return { ...updated, width: Number(updated.width) * ratio, height: Number(updated.height) * ratio, scale };
+    }
+  };
+}
+
+/**
  * Vista Module Logic
  */
 class VistaModule {
@@ -222,10 +244,22 @@ class VistaModule {
    */
   init() {
     console.log(`${VistaConfig.ID} | Initializing Vista - Theater of the Mind Strips`);
+    this.registerTokenHUD();
     this.registerSettings();
     this.registerKeybindings();
     this.registerSceneConfigTab();
     this.registerHooks();
+  }
+
+  /**
+   * Replaces the token HUD with one that keeps its normal size on Vista scenes.
+   */
+  registerTokenHUD() {
+    const VistaTokenHUD = VistaTokenHUDMixin(/** @type {typeof foundry.applications.hud.TokenHUD} */ (CONFIG.Token.hudClass));
+    CONFIG.Token.hudClass = VistaTokenHUD;
+    // The token HUD is created before modules initialize, so the existing instance is replaced too.
+    const hudContainer = game.canvas.hud;
+    if (hudContainer) hudContainer.token = new VistaTokenHUD();
   }
 
   /**
@@ -377,6 +411,7 @@ class VistaModule {
       if (!this.isActive()) return;
       this.lockViewport();
       for (const token of canvas.tokens?.placeables ?? []) this.refreshStatus(token);
+      if (canvas.tokens?.hud.rendered) canvas.tokens.hud.setPosition();
     });
 
     Hooks.on("canvasReady", () => {
