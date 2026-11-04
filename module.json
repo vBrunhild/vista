@@ -1,0 +1,26 @@
+{
+  "id": "vista",
+  "title": "Vista: Theater of the Mind Strips",
+  "description": "Divide a scene into 1 to 4 narrative strips for theater-of-the-mind play.",
+  "authors": [
+    {
+    "name": "vBrunhild"
+    }
+  ],
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
+  "scripts": ["scripts/main.js"],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "url": "",
+  "manifest": "",
+  "download": ""
+}

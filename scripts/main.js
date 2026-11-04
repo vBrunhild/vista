@@ -1,0 +1,863 @@
+/**
+ * @typedef {Object} VistaSceneConfig
+ * @property {boolean} enabled - Whether the vista is active.
+ * @property {number} stripCount - Number of strips (clamped 1-4).
+ * @property {string[]} stripLabels - Labels for each strip.
+ * @property {number} padLeft - Left padding value.
+ * @property {number} padRight - Right padding value.
+ * @property {boolean} stripLinesVisible - Toggle for line visibility.
+ */
+
+/**
+ * Vista Module Configuration
+ * Manages module settings and scene flags.
+ */
+class VistaConfig {
+  static ID = "vista";
+  static FLAG_ENABLED = "enabled";
+  static FLAG_STRIP_COUNT = "stripCount";
+  static FLAG_STRIP_LABELS = "stripLabels";
+  static FLAG_TOKEN_STRIP = "stripIndex";
+  static FLAG_PAD_LEFT = "padLeft";
+  static FLAG_PAD_RIGHT = "padRight";
+  static FLAG_STRIP_LINES_VISIBLE = "stripLinesVisible";
+
+  /**
+   * Retrieves sanitized configuration for a given scene.
+   * @param {Scene} scene - The scene document.
+   * @returns {VistaSceneConfig} The configuration object.
+   */
+  static get(scene) {
+    if (!scene) {
+      return {
+        enabled: false,
+        stripCount: 2,
+        stripLabels: [],
+        padLeft: 0,
+        padRight: 0,
+        stripLinesVisible: true,
+      };
+    }
+
+    /** @type {<T>(key: string, fallback: T) => T} */
+    const getFlag = (key, fallback) => scene.getFlag(this.ID, key) ?? fallback;
+    /** @type {<T>(key: string) => T} */
+    const getSetting = (key) => game.settings.get(this.ID, key);
+
+    return {
+      enabled: getFlag(this.FLAG_ENABLED, false),
+      stripCount: Math.clamp(getFlag(this.FLAG_STRIP_COUNT, 2), 1, 4),
+      stripLabels: getFlag(this.FLAG_STRIP_LABELS, []),
+      padLeft: getFlag(this.FLAG_PAD_LEFT, getSetting("defaultPadLeft")),
+      padRight: getFlag(this.FLAG_PAD_RIGHT, getSetting("defaultPadRight")),
+      stripLinesVisible: getFlag(
+        this.FLAG_STRIP_LINES_VISIBLE,
+        getSetting("defaultStripLinesVisible")
+      ),
+    };
+  }
+}
+
+/**
+ * Custom Canvas Layer for Vista Theater of the Mind Strips
+ */
+class VistaLayer extends foundry.canvas.layers.CanvasLayer {
+  constructor () {
+    super();
+    this.overlayContainer = null;
+  }
+
+  static get layerOptions() {
+    return foundry.utils.mergeObject(super.layerOptions, {
+      name: "vista",
+      zIndex: 250,
+    });
+  }
+
+  async _draw() {
+    this.overlayContainer = this.addChild(new PIXI.Container());
+    this.overlayContainer.label = "vista-strip-overlay";
+  }
+
+  async _tearDown() {
+    this.overlayContainer = null;
+    super._tearDown();
+  }
+
+  /**
+   * @param {VistaSceneConfig} config
+   * @param {VistaModule} moduleInstance
+   */
+  renderStrips(config, sceneWidth, sceneHeight, moduleInstance) {
+    if (!this.overlayContainer || !config.enabled) return;
+
+    this.overlayContainer.removeChildren().forEach(c => c.destroy());
+
+    const {
+      stripCount,
+      stripLabels,
+      padLeft,
+      padRight,
+      stripLinesVisible
+    } = config;
+
+    const lineColorHex = game.settings.get(VistaConfig.ID, "lineColor");
+    const lineColor = parseInt(lineColorHex.replace('#', ''), 16);
+    const lineThickness = game.settings.get(VistaConfig.ID, "lineThickness");
+    const lineOpacity = game.settings.get(VistaConfig.ID, "lineOpacity");
+
+    for (let i = 0; i < stripCount; i++) {
+      const bounds = moduleInstance.getStripBounds(
+        i,
+        stripCount,
+        sceneWidth,
+        sceneHeight,
+        padLeft,
+        padRight,
+      )
+
+      if (i > 0 && stripLinesVisible) {
+        const line = new PIXI.Graphics()
+          .lineStyle(lineThickness, lineColor, lineOpacity)
+          .lineTo(sceneWidth, bounds.y)
+          .moveTo(0, bounds.y);
+
+        this.overlayContainer.addChild(line);
+      }
+
+      const label = stripLabels[i];
+      if (label) {
+        const style = new PIXI.TextStyle({
+          fontFamily: "Signika",
+          fontSize: 28,
+          fill: "#ffffff",
+          strok: "#000000",
+          strokeThickness: 3,
+          dropShadow: true,
+          dropShadowDistance: 2,
+        });
+
+        const text = new PIXI.Text(label, style);
+        text.anchor.set(0, 0);
+        text.position.set(bounds.x + 20, bounds.y + 10);
+        this.overlayContainer.addChild(text);
+      }
+    }
+  }
+}
+
+/**
+ * Vista Module Logic
+ */
+class VistaModule {
+  constructor() {
+    this.overlayContainer = null;
+    this.isPanLocking = false;
+    this.arrangeTokensDebounced = foundry.utils.debounce(
+      this.arrangeTokens.bind(this), 50
+    );
+  }
+
+  /**
+   * Initializes the module.
+   */
+  init() {
+    console.log(`${VistaConfig.ID} | Initializing Vista - Theater of the Mind Strips`);
+    this.registerSettings();
+    this.registerKeybindings();
+    this.registerHooks();
+  }
+
+  /**
+   * Registers module-specific settings.
+   */
+  registerSettings() {
+    const scope = "world";
+    const config = true;
+
+    game.settings.register(VistaConfig.ID, "debugMode", {
+      name: "Debug Mode",
+      hint: "Enable debug logging to the console for troubleshooting",
+      scope: "client",
+      config,
+      type: Boolean,
+      default: false,
+    });
+
+    game.settings.register(VistaConfig.ID, "lineColor", {
+      name: "Strip Divider Color",
+      hint: "Color of the horizontal lines between strips (hex color)",
+      scope,
+      config,
+      type: String,
+      default: "#000000",
+      onChange: () => {
+        if (canvas.scene && this.isActive()) this.drawOverlay();
+      },
+    });
+
+    game.settings.register(VistaConfig.ID, "lineThickness", {
+      name: "Strip Divider Thickness",
+      hint: "Thickness of the horizontal lines between strips (in pixels)",
+      scope,
+      config,
+      type: Number,
+      default: 3,
+      range: { min: 1, max: 10, step: 1 },
+      onChange: () => {
+        if (canvas.scene && this.isActive()) this.drawOverlay();
+      },
+    });
+
+    game.settings.register(VistaConfig.ID, "lineOpacity", {
+      name: "Strip Divider Opacity",
+      hint: "Opacity of the horizontal lines between strips (0.0 = transparent, 1.0 = opaque)",
+      scope,
+      config,
+      type: Number,
+      default: 0.6,
+      range: { min: 0.0, max: 1.0, step: 0.1 },
+      onChange: () => {
+        if (canvas.scene && this.isActive()) this.drawOverlay();
+      },
+    });
+
+    game.settings.register(VistaConfig.ID, "defaultPadLeft", {
+      name: "Default Pad Left",
+      hint: "Default horizontal offset from the left for new scenes (pixels).",
+      scope,
+      config,
+      type: Number,
+      default: 0,
+    });
+
+    game.settings.register(VistaConfig.ID, "defaultPadRight", {
+      name: "Default Pad Right",
+      hint: "Default horizontal offset from the right for new scenes (pixels).",
+      scope,
+      config,
+      type: Number,
+      default: 0,
+    });
+
+    game.settings.register(VistaConfig.ID, "defaultStripLinesVisible", {
+      name: "Default Strip Lines Visible",
+      hint: "Whether strip separator lines are visible by default for new scenes.",
+      scope,
+      config,
+      type: Boolean,
+      default: true,
+    });
+  }
+
+  /**
+   * Registers keybindings for strip manipulation.
+   */
+  registerKeybindings() {
+    game.keybindings.register(VistaConfig.ID, "addStrip", {
+      name: game.i18n.localize("VISTA.AddStrip"),
+      hint: "Add one strip to the current scene (max 4).",
+      editable: [{ key: "BracketRight", modifiers: ["Shift"] }],
+      restricted: true,
+      onDown: async () => {
+        if (!this.isActive()) return;
+        const currentCount = VistaConfig.get(canvas.scene).stripCount;
+        if (currentCount < 4) await this.updateStripsCount(currentCount + 1);
+        else ui.notifications.warn("Vista: Maximum of 4 strips reached.");
+      },
+    });
+
+    game.keybindings.register(VistaConfig.ID, "removeStrip", {
+      name: game.i18n.localize("VISTA.RemoveStrip"),
+      hint: "Remove one strip from the current scene (min 1).",
+      editable: [{ key: "BracketLeft", modifiers: ["Shift"] }],
+      restricted: true,
+      onDown: async () => {
+        if (!this.isActive()) return;
+        const currentCount = VistaConfig.get(canvas.scene).stripCount;
+        if (currentCount > 1) await this.updateStripsCount(currentCount - 1);
+        else ui.notifications.warn("Vista: Minimum of 1 strip required.");
+      },
+    });
+
+    game.keybindings.register(VistaConfig.ID, "toggleStripLines", {
+      name: "Toggle Strip Lines",
+      hint: "Toggle visibility of the strip separator lines for the current scene.",
+      editable: [{ key: "Backslash", modifiers: ["Shift"] }],
+      restricted: true,
+      onDown: async () => {
+        if (!this.isActive()) return;
+        const scene = canvas.scene;
+        const current = VistaConfig.get(scene).stripLinesVisible;
+        await scene.setFlag(VistaConfig.ID, VistaConfig.FLAG_STRIP_LINES_VISIBLE, !current);
+      },
+    });
+  }
+
+  /**
+   * Registers foundry hooks.
+   */
+  registerHooks() {
+    Hooks.on("canvasPan", () => {
+      if (this.isActive()) this.lockViewport();
+    });
+
+    Hooks.on("canvasReady", () => {
+      return this.onCanvasReady();
+    });
+
+    Hooks.on("createCombatant", () => {
+      if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("createToken", (tokenDoc) => {
+      return this.onCreateToken(tokenDoc);
+    });
+
+    Hooks.on("deleteCombat", () => {
+      if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("deleteCombatant", () => {
+      if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("deleteToken", () => {
+      if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("preUpdateScene", (scene, updateData) => {
+      return this.preUpdateScene(scene, updateData);
+    });
+
+    Hooks.on("renderSceneConfig", (app, html, data) => {
+      return this.injectSceneConfig(app, html, data);
+    });
+
+    Hooks.on("updateCombat", (c, changes) => {
+      if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("updateCombatant", (c, changes) => {
+      if (this.isActive() && "initiative" in changes) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("updateScene", (scene, changes) => {
+      return this.onUpdateScene(scene, changes);
+    });
+
+    Hooks.on("updateToken", (tokenDoc, changes, options) => {
+      return this.onUpdateToken(tokenDoc, changes, options);
+    });
+  }
+
+  isActive() {
+    return VistaConfig.get(canvas.scene).enabled;
+  }
+
+  debug(...args) {
+    if (game.settings.get(VistaConfig.ID, "debugMode")) {
+      console.log(`[Vista Debug]`, ...args);
+    }
+  }
+
+  // ─── Event Handlers ───
+
+  /**
+   * Handler for the canvasReady hook.
+   * Initializes overlay and token arrangement.
+   */
+  onCanvasReady() {
+    if (!this.isActive()) {
+      this.removeOverlay();
+      return;
+    }
+    this.drawOverlay();
+    this.lockViewport();
+    this.arrangeTokensDebounced();
+  }
+
+  /**
+   * Handler for the updateScene hook.
+   * Responds to changes in scene flags.
+   * @param {Scene} scene - The updated scene.
+   * @param {object} changes - The changes applied.
+   */
+  async onUpdateScene(scene, changes) {
+    if (scene.id !== canvas.scene?.id) return;
+    if (!foundry.utils.hasProperty(changes, `flags.${VistaConfig.ID}`)) return;
+
+    if (foundry.utils.hasProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_COUNT}`)) {
+      const newCount = VistaConfig.get(scene).stripCount;
+      await this.redistributeStrips(newCount);
+      this.lockViewport();
+      return;
+    }
+
+    this.drawOverlay();
+    this.lockViewport();
+    this.arrangeTokensDebounced();
+  }
+
+  /**
+   * Handler for the updateToken hook.
+   * Detects manual token movement to update strip assignment.
+   * @param {TokenDocument} tokenDoc - The updated token document.
+   * @param {object} changes - The changes applied.
+   * @param {object} options - The update options.
+   */
+  onUpdateToken(tokenDoc, changes, options) {
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    if (options.vistaArrangement) return;
+    if (!("x" in changes || "y" in changes)) return;
+    this.onTokenDrop(tokenDoc, changes);
+  }
+
+  /**
+   * Handler for the createToken hook.
+   * Assigns newly created tokens to the correct strip.
+   * @param {TokenDocument} tokenDoc - The created token document.
+   */
+  onCreateToken(tokenDoc) {
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    const { stripCount } = VistaConfig.get(canvas.scene);
+    const { height: sceneHeight } = canvas.dimensions;
+    const stripIndex = this.getStripIndexAtPosition(
+      tokenDoc.y + (canvas.grid.size / 2),
+      stripCount,
+      sceneHeight
+    );
+    tokenDoc.setFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP, stripIndex).then(() => {
+      this.arrangeTokensDebounced();
+    });
+  }
+
+  /**
+   * Handles logic when a token is dropped or moved manually.
+   * Updates the strip assignment based on Y position.
+   * @param {TokenDocument} tokenDoc - The token document.
+   * @param {object} updateData - The update data (containing x/y).
+   */
+  async onTokenDrop(tokenDoc, updateData) {
+    const { stripCount } = VistaConfig.get(canvas.scene);
+    const { height: sceneHeight } = canvas.dimensions;
+
+    const newY = updateData.y ?? tokenDoc.y;
+    const tokenHeight = tokenDoc.object?.h ?? canvas.grid.size;
+    const centerY = newY + tokenHeight / 2;
+    const stripIndex = this.getStripIndexAtPosition(centerY, stripCount, sceneHeight);
+
+    await tokenDoc.setFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP, stripIndex);
+    this.arrangeTokensDebounced();
+  }
+
+  // ─── Core Logic ───
+
+  /**
+   * Calculates the bounding box for a specific strip.
+   * @param {number} stripIndex - The index of the strip.
+   * @param {number} stripCount - Total number of strips.
+   * @param {number} sceneWidth - Scene width.
+   * @param {number} sceneHeight - Scene height.
+   * @param {number} [padLeft=0] - Left padding.
+   * @param {number} [padRight=0] - Right padding.
+   * @returns {object} The bounding box {x, y, width, height}.
+   */
+  getStripBounds(
+    stripIndex,
+    stripCount,
+    sceneWidth,
+    sceneHeight,
+    padLeft = 0,
+    padRight = 0
+  ) {
+    const stripHeight = sceneHeight / stripCount;
+    return {
+      x: padLeft,
+      y: stripIndex * stripHeight,
+      width: sceneWidth - padLeft - padRight,
+      height: stripHeight,
+    };
+  }
+
+  /**
+   * Determines which strip corresponds to a given Y-coordinate.
+   * @param {number} y - The Y-coordinate.
+   * @param {number} stripCount - Total number of strips.
+   * @param {number} sceneHeight - Scene height.
+   * @returns {number} The strip index.
+   */
+  getStripIndexAtPosition(
+    y,
+    stripCount,
+    sceneHeight
+  ) {
+    const stripHeight = sceneHeight / stripCount;
+    return Math.clamp(Math.floor(y / stripHeight), 0, stripCount - 1);
+  }
+
+  /**
+   * Redistributes tokens when the strip count changes.
+   * Moves tokens from deleted strips to the last valid strip.
+   * @param {number} newCount - The new number of strips.
+   */
+  async redistributeStrips(newCount) {
+    if (!game.users.activeGM?.isSelf) return;
+
+    const tokens = canvas.tokens.placeables;
+    let movedCount = 0;
+    for (const token of tokens) {
+      const currentStrip = token.document.getFlag(
+        VistaConfig.ID,
+        VistaConfig.FLAG_TOKEN_STRIP
+      ) ?? 0;
+      if (currentStrip >= newCount) {
+        await token.document.setFlag(
+          VistaConfig.ID,
+          VistaConfig.FLAG_TOKEN_STRIP,
+          newCount - 1
+        );
+        movedCount++;
+      }
+    }
+    this.debug(`Redistribution complete: ${movedCount} tokens moved`);
+    this.drawOverlay();
+    this.arrangeTokensDebounced();
+  }
+
+  /**
+   * Updates the strip count flag for the scene.
+   * @param {number} newCount - The new strip count.
+   */
+  async updateStripsCount(newCount) {
+    const scene = canvas.scene;
+    if (!scene) return;
+    newCount = Math.clamp(newCount, 1, 4);
+    const oldCount = VistaConfig.get(scene).stripCount;
+    if (oldCount === newCount) return;
+    await scene.setFlag(VistaConfig.ID, VistaConfig.FLAG_STRIP_COUNT, newCount);
+  }
+
+  /**
+   * Locks the viewport to center the scene.
+   */
+  lockViewport() {
+    console.log("Vista | lockViewport called");
+    if (!this.isActive() || this.isPanLocking) {
+      console.log(
+        "Vista | lockViewport skipped",
+        { isActive: this.isActive(), isPanLocking: this.isPanLocking }
+      );
+      return;
+    }
+    this.isPanLocking = true;
+
+    const availableWidth = window.innerWidth;
+    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
+
+    const scale = Math.min(
+      availableWidth / sceneWidth,
+      window.innerHeight / sceneHeight
+    );
+
+    canvas.pan({ x: sceneWidth / 2, y: sceneHeight / 2, scale });
+    requestAnimationFrame(() => { this.isPanLocking = false; });
+  }
+
+  // ─── Token Layout & Updates ───
+
+  /**
+   * Calculates the target layout for all tokens in the scene.
+   * Separates layout logic from document update logic.
+   * @returns {Map<string, object>} Map of token ID to target properties {x, y, width, height}.
+   */
+  calculateTokenTargets() {
+    const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
+    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
+    const tokens = canvas.tokens.placeables;
+    const baseSize = canvas.grid.size;
+    const targets = new Map();
+
+    const TOKEN_PADDING = 5;
+    const ROW_OFFSET_RATIO = 0.5;
+
+    for (let i = 0; i < stripCount; i++) {
+      const sorted = this.getSortedTokensForStrip(tokens, i);
+      if (!sorted.length) continue;
+
+      const bounds = this.getStripBounds(
+        i,
+        stripCount,
+        sceneWidth,
+        sceneHeight,
+        padLeft,
+        padRight
+      );
+
+      const { scale, rowCount, scaledSize } = this.computeTokenLayout(
+        sorted.length,
+        baseSize,
+        bounds
+      );
+
+      const baseTokensPerRow = Math.floor(sorted.length / rowCount);
+      const extraTokens = sorted.length % rowCount;
+      const totalRowsHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
+
+      let currentY = bounds.y + (bounds.height - totalRowsHeight) / 2;
+      let tokenIndex = 0;
+
+      for (let row = 0; row < rowCount; row++) {
+        const tokensInThisRow = row < extraTokens ? baseTokensPerRow + 1 : baseTokensPerRow;
+        const isOddRow = row % 2 === 1;
+        const isOddLenInRow = sorted.length % 2 === 1;
+        const rowWidth = tokensInThisRow * scaledSize + (tokensInThisRow - 1) * TOKEN_PADDING;
+
+        let startX = bounds.x + (bounds.width - rowWidth) / 2;
+        if (isOddRow && !isOddLenInRow) {
+          startX += (scaledSize + TOKEN_PADDING) * ROW_OFFSET_RATIO;
+        }
+
+        for (let col = 0; col < tokensInThisRow; col++) {
+          const token = sorted[tokenIndex++];
+          const targetX = startX + col * (scaledSize + TOKEN_PADDING);
+          const targetY = currentY;
+
+          targets.set(token.id, {
+            x: targetX,
+            y: targetY,
+            width: scale,
+            height: scale
+          });
+        }
+        currentY += scaledSize + TOKEN_PADDING;
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * Computes the layout parameters for tokens within a strip.
+   * @param {number} tokenCount - Number of tokens.
+   * @param {number} baseTokenSize - Base size of a token.
+   * @param {object} stripBounds - Bounding box of the strip.
+   * @returns {object} Layout parameters {scale, tokensPerRow, rowCount, scaledSize}.
+   */
+  computeTokenLayout(tokenCount, baseTokenSize, stripBounds) {
+    const TOKEN_PADDING = 5;
+    const STRIP_PADDING = 5;
+    const MIN_SCALE = 0.5;
+    const MAX_SCALE = 7.5;
+
+    if (tokenCount === 0) return { scale: 1.0, tokensPerRow: 0, rowCount: 1 };
+
+    const availableHeight = stripBounds.height - TOKEN_PADDING * 2;
+    const availableWidth = stripBounds.width - STRIP_PADDING * 2;
+
+    let scale = Math.clamp(availableHeight / baseTokenSize, MIN_SCALE, MAX_SCALE);
+    let scaledSize = baseTokenSize * scale;
+    let tokensPerRow = Math.max(1, Math.floor((availableWidth + TOKEN_PADDING) / (scaledSize + TOKEN_PADDING)));
+    let rowCount = Math.ceil(tokenCount / tokensPerRow);
+
+    if (rowCount > 1) {
+      const totalRowHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
+      if (totalRowHeight > availableHeight) {
+        scale = availableHeight / (rowCount * baseTokenSize + (rowCount - 1) * TOKEN_PADDING / baseTokenSize);
+        scale = Math.clamp(scale, MIN_SCALE, MAX_SCALE);
+        scaledSize = baseTokenSize * scale;
+        tokensPerRow = Math.max(1, Math.floor((availableWidth + TOKEN_PADDING) / (scaledSize + TOKEN_PADDING)));
+        rowCount = Math.ceil(tokenCount / tokensPerRow);
+      }
+    }
+    return { scale, tokensPerRow, rowCount, scaledSize };
+  }
+
+  /**
+   * Retrieves and sorts tokens for a specific strip.
+   * Sorting is based on combat turn (if active) or alphabetical order.
+   * @param {Token[]} tokens - Array of token placeables.
+   * @param {number} stripIndex - The strip index.
+   * @returns {Token[]} Sorted array of tokens.
+   */
+  getSortedTokensForStrip(tokens, stripIndex) {
+    const combat = game.combat;
+    const inCombat = combat?.started;
+
+    const stripTokens = tokens.filter((t) => {
+      const assigned = t.document.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP) ?? 0;
+      return assigned === stripIndex;
+    });
+
+    if (!inCombat) {
+      stripTokens.sort((a, b) => (a.document.name ?? "").localeCompare(b.document.name ?? ""));
+      return stripTokens;
+    }
+
+    const tokenIdToTurnIndex = new Map();
+    combat.turns.forEach((turn, index) => tokenIdToTurnIndex.set(turn.tokenId, index));
+
+    stripTokens.sort((a, b) => {
+      const turnIndexA = tokenIdToTurnIndex.get(a.id);
+      const turnIndexB = tokenIdToTurnIndex.get(b.id);
+      if (turnIndexA !== undefined && turnIndexB !== undefined) return turnIndexA - turnIndexB;
+      if (turnIndexA !== undefined) return -1;
+      if (turnIndexB !== undefined) return 1;
+      return (a.document.name ?? "").localeCompare(b.document.name ?? "");
+    });
+
+    return stripTokens;
+  }
+
+  /**
+   * Main orchestrator function: Calculates layout, compares with current state, and applies updates.
+   */
+  async arrangeTokens() {
+    if (!this.isActive() || !game.users.activeGM?.isSelf) return;
+
+    const targets = this.calculateTokenTargets();
+    const updates = [];
+    const tokens = canvas.tokens.placeables;
+
+    for (const token of tokens) {
+      const target = targets.get(token.id);
+      if (!target) continue;
+
+      const tokenUpdates = {};
+      let hasChanges = false;
+
+      if (Math.abs(token.document.x - target.x) > 1) {
+        tokenUpdates.x = target.x;
+        hasChanges = true;
+      }
+      if (Math.abs(token.document.y - target.y) > 1) {
+        tokenUpdates.y = target.y;
+        hasChanges = true;
+      }
+      if (Math.abs((token.document.width ?? 1) - target.width) > 0.01) {
+        tokenUpdates.width = target.width;
+        hasChanges = true;
+      }
+      if (Math.abs((token.document.height ?? 1) - target.height) > 0.01) {
+        tokenUpdates.height = target.height;
+        hasChanges = true;
+      }
+
+      if (hasChanges) {
+        tokenUpdates._id = token.id;
+        updates.push(tokenUpdates);
+      }
+    }
+
+    if (updates.length > 0) {
+      this.debug(`Batch updating ${updates.length} tokens`);
+      await canvas.scene.updateEmbeddedDocuments("Token", updates, { vistaArrangement: true });
+    }
+  }
+
+  // ─── Visuals ───
+
+  /**
+   * Draws the overlay lines and labels.
+   */
+  drawOverlay() {
+    if (!canvas?.ready || !canvas.vista) return;
+
+    const config = VistaConfig.get(canvas.scene);
+    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
+
+    canvas.vista.renderStrips(config, sceneWidth, sceneHeight, this);
+  }
+
+  /**
+   * Removes the overlay from the canvas.
+   */
+  removeOverlay() {
+    if (this.overlayContainer) {
+      this.overlayContainer.destroy({ children: true });
+      this.overlayContainer = null;
+    }
+  }
+
+  /**
+   * Injects the Vista settings into the Scene Configuration dialog.
+   * @param {FormApplication} app - The app instance.
+   * @param {HTMLElement} html - The HTML content.
+   * @param {object} data - The data object.
+   */
+  injectSceneConfig(app, html, data) {
+    const scene = app.document;
+    const flags = VistaConfig.get(scene);
+
+    const section = `
+    <fieldset>
+      <legend><i class="fas fa-theater-masks"></i> ${game.i18n.localize("VISTA.Settings")}</legend>
+      <div class="form-group">
+        <label>${game.i18n.localize("VISTA.EnableStrips")}</label>
+        <input type="checkbox" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_ENABLED}" ${flags.enabled ? "checked" : ""} />
+        <p class="notes">${game.i18n.localize("VISTA.EnableStripsHint")}</p>
+      </div>
+      <div class="form-group">
+        <label>${game.i18n.localize("VISTA.StripCount")}</label>
+        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_COUNT}" value="${flags.stripCount}" min="1" max="4" step="1" />
+        <p class="notes">${game.i18n.localize("VISTA.StripCountHint")}</p>
+      </div>
+      <div class="form-group">
+        <label>${game.i18n.localize("VISTA.StripLabels")}</label>
+        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${(flags.stripLabels ?? []).join(", ")}" placeholder="Bar, Common Room, Stage" />
+        <p class="notes">${game.i18n.localize("VISTA.StripLabelsHint")}</p>
+      </div>
+      <div class="form-group">
+        <label>Show Strip Lines</label>
+        <input type="checkbox" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LINES_VISIBLE}" ${flags.stripLinesVisible ? "checked" : ""} />
+        <p class="notes">Visible separator lines between strips.</p>
+      </div>
+      <div class="form-group">
+        <label>Pad Left (px)</label>
+        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_LEFT}" value="${flags.padLeft}" min="0" step="10" />
+        <p class="notes">Offset strip content from the left.</p>
+      </div>
+      <div class="form-group">
+        <label>Pad Right (px)</label>
+        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_RIGHT}" value="${flags.padRight}" min="0" step="10" />
+        <p class="notes">Offset strip content from the right.</p>
+      </div>
+    </fieldset>`;
+
+    const basicsTab = html.querySelector('.tab[data-tab="basics"]');
+    if (basicsTab) {
+      basicsTab.insertAdjacentHTML("beforeend", section);
+    } else {
+      const target = html.querySelector('button[type="submit"]');
+      if (target) {
+        const insertPoint = target.closest(".form-group, .sheet-footer") ?? target.parentElement;
+        insertPoint.insertAdjacentHTML("beforebegin", section);
+      }
+    }
+    app.setPosition({ height: "auto" });
+  }
+
+  /**
+   * Pre-update handler for scene changes.
+   * Processes string input for labels into an array.
+   * @param {Scene} scene - The scene document.
+   * @param {object} updateData - The update data.
+   */
+  preUpdateScene(scene, updateData) {
+    const labelPath = `flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}`;
+    const raw = foundry.utils.getProperty(updateData, labelPath);
+    if (typeof raw === "string") {
+      const arr = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      foundry.utils.setProperty(updateData, labelPath, arr);
+    }
+  }
+}
+
+const vista = new VistaModule();
+Hooks.once("init", () => {
+  CONFIG.Canvas.layers.vista = {
+    group: "interface",
+    layerClass: VistaLayer
+  };
+
+  vista.init()
+});
