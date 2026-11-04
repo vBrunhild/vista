@@ -324,6 +324,10 @@ class VistaModule {
       return this.preCreateToken(tokenDoc);
     });
 
+    Hooks.on("preMoveToken", (tokenDoc, movement) => {
+      this.preMoveToken(tokenDoc, movement);
+    });
+
     Hooks.on("preUpdateScene", (scene, updateData) => {
       return this.preUpdateScene(scene, updateData);
     });
@@ -417,6 +421,17 @@ class VistaModule {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     const stripIndex = this.getStripIndexForToken(tokenDoc.y, tokenDoc.height);
     tokenDoc.updateSource({ [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: stripIndex });
+  }
+
+  /**
+   * Handler for the preMoveToken hook.
+   * Prevents tokens from turning toward the drag direction, since strips have no facing.
+   * @param {TokenDocument} tokenDoc - The token document being moved.
+   * @param {object} movement - The pending movement operation.
+   */
+  preMoveToken(tokenDoc, movement) {
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    movement.autoRotate = false;
   }
 
   /**
