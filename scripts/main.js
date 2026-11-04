@@ -876,48 +876,54 @@ class VistaModule {
     // The tab is not one of the sheet's parts, so it is rebuilt on each render to avoid stale values.
     html.querySelector(`.tab[data-group="sheet"][data-tab="${VistaConfig.ID}"]`)?.remove();
 
-    const scene = app.document;
-    const flags = VistaConfig.get(scene);
-    const active = app.tabGroups.sheet === VistaConfig.ID ? " active" : "";
+    const { createFormGroup, createCheckboxInput, createNumberInput, createTextInput } = foundry.applications.fields;
+    const flags = VistaConfig.get(app.document);
+    const name = (/** @type {string} */ flag) => `flags.${VistaConfig.ID}.${flag}`;
+    const group = (/** @type {string} */ label, /** @type {string} */ hint, /** @type {HTMLElement} */ input) =>
+      createFormGroup({ label, hint, input, rootId: app.id, localize: true });
 
-    const section = `
-    <div class="tab scrollable${active}" data-group="sheet" data-tab="${VistaConfig.ID}">
-    <fieldset>
-      <legend><i class="fas fa-theater-masks"></i> ${game.i18n.localize("VISTA.Settings")}</legend>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.EnableStrips")}</label>
-        <input type="checkbox" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_ENABLED}" ${flags.enabled ? "checked" : ""} />
-        <p class="notes">${game.i18n.localize("VISTA.EnableStripsHint")}</p>
-      </div>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.StripCount")}</label>
-        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_COUNT}" value="${flags.stripCount}" min="1" max="4" step="1" />
-        <p class="notes">${game.i18n.localize("VISTA.StripCountHint")}</p>
-      </div>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.StripLabels")}</label>
-        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${foundry.utils.escapeHTML(flags.stripLabels.join(", "))}" placeholder="${game.i18n.localize("VISTA.StripLabelsPlaceholder")}" />
-        <p class="notes">${game.i18n.localize("VISTA.StripLabelsHint")}</p>
-      </div>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.ShowStripLines")}</label>
-        <input type="checkbox" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LINES_VISIBLE}" ${flags.stripLinesVisible ? "checked" : ""} />
-        <p class="notes">${game.i18n.localize("VISTA.ShowStripLinesHint")}</p>
-      </div>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.PadLeft")}</label>
-        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_LEFT}" value="${flags.padLeft}" min="0" step="10" />
-        <p class="notes">${game.i18n.localize("VISTA.PadLeftHint")}</p>
-      </div>
-      <div class="form-group">
-        <label>${game.i18n.localize("VISTA.PadRight")}</label>
-        <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_RIGHT}" value="${flags.padRight}" min="0" step="10" />
-        <p class="notes">${game.i18n.localize("VISTA.PadRightHint")}</p>
-      </div>
-    </fieldset>
-    </div>`;
+    const tab = document.createElement("div");
+    tab.className = "tab scrollable";
+    tab.classList.toggle("active", app.tabGroups.sheet === VistaConfig.ID);
+    tab.dataset.group = "sheet";
+    tab.dataset.tab = VistaConfig.ID;
 
-    html.querySelector(".form-footer")?.insertAdjacentHTML("beforebegin", section);
+    tab.append(
+      group("VISTA.EnableStrips", "VISTA.EnableStripsHint", createCheckboxInput({
+        name: name(VistaConfig.FLAG_ENABLED),
+        value: flags.enabled,
+      })),
+      group("VISTA.StripCount", "VISTA.StripCountHint", createNumberInput({
+        name: name(VistaConfig.FLAG_STRIP_COUNT),
+        value: flags.stripCount,
+        min: 1,
+        max: 4,
+        step: 1,
+      })),
+      group("VISTA.StripLabels", "VISTA.StripLabelsHint", createTextInput({
+        name: name(VistaConfig.FLAG_STRIP_LABELS),
+        value: flags.stripLabels.join(", "),
+        placeholder: game.i18n.localize("VISTA.StripLabelsPlaceholder"),
+      })),
+      group("VISTA.ShowStripLines", "VISTA.ShowStripLinesHint", createCheckboxInput({
+        name: name(VistaConfig.FLAG_STRIP_LINES_VISIBLE),
+        value: flags.stripLinesVisible,
+      })),
+      group("VISTA.PadLeft", "VISTA.PadLeftHint", createNumberInput({
+        name: name(VistaConfig.FLAG_PAD_LEFT),
+        value: flags.padLeft,
+        min: 0,
+        step: 10,
+      })),
+      group("VISTA.PadRight", "VISTA.PadRightHint", createNumberInput({
+        name: name(VistaConfig.FLAG_PAD_RIGHT),
+        value: flags.padRight,
+        min: 0,
+        step: 10,
+      })),
+    );
+
+    html.querySelector(".form-footer")?.before(tab);
   }
 
   /**
