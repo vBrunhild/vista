@@ -383,9 +383,12 @@ class VistaModule {
    * @param {Scene} scene - The updated scene.
    * @param {object} changes - The changes applied.
    */
-  onUpdateScene(scene, changes) {
+  async onUpdateScene(scene, changes) {
     if (scene.id !== canvas.scene?.id) return;
     if (!foundry.utils.hasProperty(changes, `flags.${VistaConfig.ID}`)) return;
+
+    const enabledPath = `flags.${VistaConfig.ID}.${VistaConfig.FLAG_ENABLED}`;
+    if (foundry.utils.getProperty(changes, enabledPath) === true) await this.assignStripsFromPositions();
 
     this.drawOverlay();
     this.lockViewport();
@@ -477,6 +480,18 @@ class VistaModule {
   getTokenStrip(tokenDoc, stripCount) {
     const assigned = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP) ?? 0;
     return Math.min(assigned, stripCount - 1);
+  }
+
+  /**
+   * Assigns every token in the scene to the strip under its current position.
+   */
+  async assignStripsFromPositions() {
+    if (!game.users.activeGM?.isSelf) return;
+    const updates = canvas.scene.tokens.map((tokenDoc) => ({
+      _id: tokenDoc.id,
+      [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: this.getStripIndexForToken(tokenDoc.y, tokenDoc.height),
+    }));
+    await canvas.scene.updateEmbeddedDocuments("Token", updates);
   }
 
   /**
