@@ -119,8 +119,8 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
       if (i > 0 && stripLinesVisible) {
         const line = new PIXI.Graphics()
           .lineStyle(lineThickness, lineColor, lineOpacity)
-          .lineTo(sceneWidth, bounds.y)
-          .moveTo(0, bounds.y);
+          .moveTo(0, bounds.y)
+          .lineTo(sceneWidth, bounds.y);
 
         this.overlayContainer.addChild(line);
       }
