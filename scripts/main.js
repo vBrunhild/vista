@@ -496,14 +496,8 @@ class VistaModule {
    * Locks the viewport to center the scene.
    */
   lockViewport() {
-    console.log("Vista | lockViewport called");
-    if (!this.isActive() || this.isPanLocking) {
-      console.log(
-        "Vista | lockViewport skipped",
-        { isActive: this.isActive(), isPanLocking: this.isPanLocking }
-      );
-      return;
-    }
+    if (!this.isActive() || this.isPanLocking) return;
+    this.debug("Locking viewport");
     this.isPanLocking = true;
 
     const { sceneRect } = canvas.dimensions;
