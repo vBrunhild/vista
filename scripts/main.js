@@ -170,8 +170,8 @@ class VistaModule {
     const config = true;
 
     game.settings.register(VistaConfig.ID, "debugMode", {
-      name: "Debug Mode",
-      hint: "Enable debug logging to the console for troubleshooting",
+      name: "VISTA.DebugMode",
+      hint: "VISTA.DebugModeHint",
       scope: "client",
       config,
       type: Boolean,
@@ -179,8 +179,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "lineColor", {
-      name: "Strip Divider Color",
-      hint: "Color of the horizontal lines between strips",
+      name: "VISTA.LineColor",
+      hint: "VISTA.LineColorHint",
       scope,
       config,
       type: new foundry.data.fields.ColorField({ nullable: false }),
@@ -191,8 +191,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "lineThickness", {
-      name: "Strip Divider Thickness",
-      hint: "Thickness of the horizontal lines between strips (in pixels)",
+      name: "VISTA.LineThickness",
+      hint: "VISTA.LineThicknessHint",
       scope,
       config,
       type: Number,
@@ -204,8 +204,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "lineOpacity", {
-      name: "Strip Divider Opacity",
-      hint: "Opacity of the horizontal lines between strips (0.0 = transparent, 1.0 = opaque)",
+      name: "VISTA.LineOpacity",
+      hint: "VISTA.LineOpacityHint",
       scope,
       config,
       type: Number,
@@ -217,8 +217,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "defaultPadLeft", {
-      name: "Default Pad Left",
-      hint: "Default horizontal offset from the left for new scenes (pixels).",
+      name: "VISTA.DefaultPadLeft",
+      hint: "VISTA.DefaultPadLeftHint",
       scope,
       config,
       type: Number,
@@ -226,8 +226,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "defaultPadRight", {
-      name: "Default Pad Right",
-      hint: "Default horizontal offset from the right for new scenes (pixels).",
+      name: "VISTA.DefaultPadRight",
+      hint: "VISTA.DefaultPadRightHint",
       scope,
       config,
       type: Number,
@@ -235,8 +235,8 @@ class VistaModule {
     });
 
     game.settings.register(VistaConfig.ID, "defaultStripLinesVisible", {
-      name: "Default Strip Lines Visible",
-      hint: "Whether strip separator lines are visible by default for new scenes.",
+      name: "VISTA.DefaultStripLinesVisible",
+      hint: "VISTA.DefaultStripLinesVisibleHint",
       scope,
       config,
       type: Boolean,
@@ -249,34 +249,34 @@ class VistaModule {
    */
   registerKeybindings() {
     game.keybindings.register(VistaConfig.ID, "addStrip", {
-      name: game.i18n.localize("VISTA.AddStrip"),
-      hint: "Add one strip to the current scene (max 4).",
+      name: "VISTA.AddStrip",
+      hint: "VISTA.AddStripHint",
       editable: [{ key: "BracketRight", modifiers: ["Shift"] }],
       restricted: true,
       onDown: async () => {
         if (!this.isActive()) return;
         const currentCount = VistaConfig.get(canvas.scene).stripCount;
         if (currentCount < 4) await this.updateStripsCount(currentCount + 1);
-        else ui.notifications.warn("Vista: Maximum of 4 strips reached.");
+        else ui.notifications.warn("VISTA.MaxStripsReached", { localize: true });
       },
     });
 
     game.keybindings.register(VistaConfig.ID, "removeStrip", {
-      name: game.i18n.localize("VISTA.RemoveStrip"),
-      hint: "Remove one strip from the current scene (min 1).",
+      name: "VISTA.RemoveStrip",
+      hint: "VISTA.RemoveStripHint",
       editable: [{ key: "BracketLeft", modifiers: ["Shift"] }],
       restricted: true,
       onDown: async () => {
         if (!this.isActive()) return;
         const currentCount = VistaConfig.get(canvas.scene).stripCount;
         if (currentCount > 1) await this.updateStripsCount(currentCount - 1);
-        else ui.notifications.warn("Vista: Minimum of 1 strip required.");
+        else ui.notifications.warn("VISTA.MinStripsReached", { localize: true });
       },
     });
 
     game.keybindings.register(VistaConfig.ID, "toggleStripLines", {
-      name: "Toggle Strip Lines",
-      hint: "Toggle visibility of the strip separator lines for the current scene.",
+      name: "VISTA.ToggleStripLines",
+      hint: "VISTA.ToggleStripLinesHint",
       editable: [{ key: "Backslash", modifiers: ["Shift"] }],
       restricted: true,
       onDown: async () => {
@@ -746,23 +746,23 @@ class VistaModule {
       </div>
       <div class="form-group">
         <label>${game.i18n.localize("VISTA.StripLabels")}</label>
-        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${foundry.utils.escapeHTML(flags.stripLabels.join(", "))}" placeholder="Bar, Common Room, Stage" />
+        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${foundry.utils.escapeHTML(flags.stripLabels.join(", "))}" placeholder="${game.i18n.localize("VISTA.StripLabelsPlaceholder")}" />
         <p class="notes">${game.i18n.localize("VISTA.StripLabelsHint")}</p>
       </div>
       <div class="form-group">
-        <label>Show Strip Lines</label>
+        <label>${game.i18n.localize("VISTA.ShowStripLines")}</label>
         <input type="checkbox" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LINES_VISIBLE}" ${flags.stripLinesVisible ? "checked" : ""} />
-        <p class="notes">Visible separator lines between strips.</p>
+        <p class="notes">${game.i18n.localize("VISTA.ShowStripLinesHint")}</p>
       </div>
       <div class="form-group">
-        <label>Pad Left (px)</label>
+        <label>${game.i18n.localize("VISTA.PadLeft")}</label>
         <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_LEFT}" value="${flags.padLeft}" min="0" step="10" />
-        <p class="notes">Offset strip content from the left.</p>
+        <p class="notes">${game.i18n.localize("VISTA.PadLeftHint")}</p>
       </div>
       <div class="form-group">
-        <label>Pad Right (px)</label>
+        <label>${game.i18n.localize("VISTA.PadRight")}</label>
         <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_RIGHT}" value="${flags.padRight}" min="0" step="10" />
-        <p class="notes">Offset strip content from the right.</p>
+        <p class="notes">${game.i18n.localize("VISTA.PadRightHint")}</p>
       </div>
     </fieldset>`;
 
