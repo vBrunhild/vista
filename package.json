@@ -1,5 +1,5 @@
 {
   "devDependencies": {
-    "fvtt-types": "github:League-of-Foundry-Developers/foundry-vtt-types#main"
+    "fvtt-types": "github:League-of-Foundry-Developers/foundry-vtt-types#911d2286c6bcf639a200160bd3de23b26a0460ff"
   }
 }

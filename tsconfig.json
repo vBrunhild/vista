@@ -3,6 +3,10 @@
     "types": ["fvtt-types"],
     "target": "esnext",
     "moduleResolution": "bundler",
-    "strict": true
-  }
+    "strict": true,
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": ["scripts/**/*.js"]
 }
