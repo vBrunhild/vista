@@ -5,6 +5,16 @@ Works very well with any system that doesn't need a grid.
 
 Requires Foundry VTT v13.
 
+## Installation
+
+In Foundry's setup screen, go to **Add-on Modules**, click **Install Module**, paste this manifest URL into the field at the bottom and click **Install**:
+
+```
+https://github.com/vBrunhild/vista/releases/latest/download/module.json
+```
+
+To install by hand instead, download `module.zip` from the [latest release](https://github.com/vBrunhild/vista/releases/latest) and extract it into `Data/modules/vista`.
+
 ## Features
 
 ### Strips
@@ -94,6 +104,10 @@ The module is plain JavaScript with no build step. Types come from [fvtt-types](
 npm install
 npm run typecheck
 ```
+
+### Releasing
+
+Publish a GitHub release with a tag like `v1.2.0`. The release workflow sets the version and download URL in `module.json` from the tag, packages the module into `module.zip` and attaches both files to the release.
 
 # AI Usage Disclosure
 
