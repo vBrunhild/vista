@@ -88,7 +88,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
    * @param {VistaSceneConfig} config
    * @param {VistaModule} moduleInstance
    */
-  renderStrips(config, sceneWidth, sceneHeight, moduleInstance) {
+  renderStrips(config, moduleInstance) {
     if (!this.overlayContainer) return;
 
     this.overlayContainer.removeChildren().forEach(c => c.destroy());
@@ -107,21 +107,16 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
     const lineThickness = game.settings.get(VistaConfig.ID, "lineThickness");
     const lineOpacity = game.settings.get(VistaConfig.ID, "lineOpacity");
 
+    const { sceneRect } = canvas.dimensions;
+
     for (let i = 0; i < stripCount; i++) {
-      const bounds = moduleInstance.getStripBounds(
-        i,
-        stripCount,
-        sceneWidth,
-        sceneHeight,
-        padLeft,
-        padRight,
-      )
+      const bounds = moduleInstance.getStripBounds(i, stripCount, padLeft, padRight);
 
       if (i > 0 && stripLinesVisible) {
         const line = new PIXI.Graphics()
           .lineStyle(lineThickness, lineColor, lineOpacity)
-          .moveTo(0, bounds.y)
-          .lineTo(sceneWidth, bounds.y);
+          .moveTo(sceneRect.x, bounds.y)
+          .lineTo(sceneRect.right, bounds.y);
 
         this.overlayContainer.addChild(line);
       }
@@ -439,28 +434,20 @@ class VistaModule {
   // ─── Core Logic ───
 
   /**
-   * Calculates the bounding box for a specific strip.
+   * Calculates the bounding box for a specific strip within the scene area.
    * @param {number} stripIndex - The index of the strip.
    * @param {number} stripCount - Total number of strips.
-   * @param {number} sceneWidth - Scene width.
-   * @param {number} sceneHeight - Scene height.
    * @param {number} [padLeft=0] - Left padding.
    * @param {number} [padRight=0] - Right padding.
    * @returns {object} The bounding box {x, y, width, height}.
    */
-  getStripBounds(
-    stripIndex,
-    stripCount,
-    sceneWidth,
-    sceneHeight,
-    padLeft = 0,
-    padRight = 0
-  ) {
-    const stripHeight = sceneHeight / stripCount;
+  getStripBounds(stripIndex, stripCount, padLeft = 0, padRight = 0) {
+    const { sceneRect } = canvas.dimensions;
+    const stripHeight = sceneRect.height / stripCount;
     return {
-      x: padLeft,
-      y: stripIndex * stripHeight,
-      width: sceneWidth - padLeft - padRight,
+      x: sceneRect.x + padLeft,
+      y: sceneRect.y + stripIndex * stripHeight,
+      width: sceneRect.width - padLeft - padRight,
       height: stripHeight,
     };
   }
@@ -473,9 +460,10 @@ class VistaModule {
    */
   getStripIndexForToken(y, height) {
     const { stripCount } = VistaConfig.get(canvas.scene);
+    const { sceneRect } = canvas.dimensions;
     const centerY = y + (height * canvas.grid.size) / 2;
-    const stripHeight = canvas.dimensions.height / stripCount;
-    return Math.clamp(Math.floor(centerY / stripHeight), 0, stripCount - 1);
+    const stripHeight = sceneRect.height / stripCount;
+    return Math.clamp(Math.floor((centerY - sceneRect.y) / stripHeight), 0, stripCount - 1);
   }
 
   /**
@@ -518,15 +506,13 @@ class VistaModule {
     }
     this.isPanLocking = true;
 
-    const availableWidth = window.innerWidth;
-    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
-
+    const { sceneRect } = canvas.dimensions;
     const scale = Math.min(
-      availableWidth / sceneWidth,
-      window.innerHeight / sceneHeight
+      window.innerWidth / sceneRect.width,
+      window.innerHeight / sceneRect.height
     );
 
-    canvas.pan({ x: sceneWidth / 2, y: sceneHeight / 2, scale });
+    canvas.pan({ x: sceneRect.center.x, y: sceneRect.center.y, scale });
     requestAnimationFrame(() => { this.isPanLocking = false; });
   }
 
@@ -539,7 +525,6 @@ class VistaModule {
    */
   calculateTokenTargets() {
     const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
-    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
     const tokens = canvas.tokens.placeables;
     const baseSize = canvas.grid.size;
     const targets = new Map();
@@ -551,14 +536,7 @@ class VistaModule {
       const sorted = this.getSortedTokensForStrip(tokens, i, stripCount);
       if (!sorted.length) continue;
 
-      const bounds = this.getStripBounds(
-        i,
-        stripCount,
-        sceneWidth,
-        sceneHeight,
-        padLeft,
-        padRight
-      );
+      const bounds = this.getStripBounds(i, stripCount, padLeft, padRight);
 
       const { scale, rowCount, scaledSize } = this.computeTokenLayout(
         sorted.length,
@@ -727,9 +705,7 @@ class VistaModule {
     if (!canvas?.ready || !canvas.vista) return;
 
     const config = VistaConfig.get(canvas.scene);
-    const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
-
-    canvas.vista.renderStrips(config, sceneWidth, sceneHeight, this);
+    canvas.vista.renderStrips(config, this);
   }
 
   /**
