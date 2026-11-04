@@ -89,9 +89,10 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
    * @param {VistaModule} moduleInstance
    */
   renderStrips(config, sceneWidth, sceneHeight, moduleInstance) {
-    if (!this.overlayContainer || !config.enabled) return;
+    if (!this.overlayContainer) return;
 
     this.overlayContainer.removeChildren().forEach(c => c.destroy());
+    if (!config.enabled) return;
 
     const {
       stripCount,
@@ -151,7 +152,6 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
  */
 class VistaModule {
   constructor() {
-    this.overlayContainer = null;
     this.isPanLocking = false;
     this.arrangeTokensDebounced = foundry.utils.debounce(
       this.arrangeTokens.bind(this), 50
@@ -368,10 +368,7 @@ class VistaModule {
    * Initializes overlay and token arrangement.
    */
   onCanvasReady() {
-    if (!this.isActive()) {
-      this.removeOverlay();
-      return;
-    }
+    if (!this.isActive()) return;
     this.drawOverlay();
     this.lockViewport();
     this.arrangeTokensDebounced();
@@ -766,16 +763,6 @@ class VistaModule {
     const { width: sceneWidth, height: sceneHeight } = canvas.dimensions;
 
     canvas.vista.renderStrips(config, sceneWidth, sceneHeight, this);
-  }
-
-  /**
-   * Removes the overlay from the canvas.
-   */
-  removeOverlay() {
-    if (this.overlayContainer) {
-      this.overlayContainer.destroy({ children: true });
-      this.overlayContainer = null;
-    }
   }
 
   /**
