@@ -19,7 +19,7 @@
  */
 
 /**
- * @typedef {NonNullable<typeof canvas.dimensions> & { scale: { min: number, max: number } }} CanvasDimensions
+ * @typedef {NonNullable<typeof canvas.dimensions> & { scale: { min: number, max: number }, uiScale: number }} CanvasDimensions
  */
 
 /**
@@ -59,6 +59,7 @@ class VistaConfig {
   /** @readonly */ static FLAG_SIDE_BY_SIDE = "sideBySide";
   /** @readonly */ static FLAG_BACKSTAGE = "backstage";
   /** @readonly */ static FLAG_TOKEN_BACKSTAGE = "inBackstage";
+  /** @readonly */ static FLAG_TOKEN_STATUS = "status";
 
   /**
    * Retrieves sanitized configuration for a given scene.
@@ -209,6 +210,8 @@ class VistaModule {
 
   constructor() {
     this.isPanLocking = false;
+    /** @type {WeakMap<Token, foundry.canvas.containers.PreciseText>} */
+    this.statusTexts = new WeakMap();
     this.arrangeTokensDebounced = foundry.utils.debounce(
       this.arrangeTokens.bind(this), 50
     );
@@ -371,7 +374,9 @@ class VistaModule {
    */
   registerHooks() {
     Hooks.on("canvasPan", () => {
-      if (this.isActive()) this.lockViewport();
+      if (!this.isActive()) return;
+      this.lockViewport();
+      for (const token of canvas.tokens?.placeables ?? []) this.refreshStatus(token);
     });
 
     Hooks.on("canvasReady", () => {
@@ -392,6 +397,10 @@ class VistaModule {
 
     Hooks.on("deleteCombatant", () => {
       if (this.isActive()) this.arrangeTokensDebounced();
+    });
+
+    Hooks.on("drawToken", (token) => {
+      this.drawStatus(token);
     });
 
     Hooks.on("deleteToken", () => {
@@ -420,8 +429,16 @@ class VistaModule {
       return this.preUpdateToken(tokenDoc, changes, options);
     });
 
+    Hooks.on("refreshToken", (token) => {
+      this.refreshStatus(token);
+    });
+
     Hooks.on("renderSceneConfig", (app, html) => {
       return this.injectSceneConfig(app, html);
+    });
+
+    Hooks.on("renderTokenHUD", (hud, html) => {
+      this.injectStatusField(hud, html);
     });
 
     Hooks.on("updateActor", (actor, changes) => {
@@ -453,7 +470,7 @@ class VistaModule {
   /**
    * The drawn scene's canvas dimensions.
    * Strips are only laid out on a drawn scene, where the dimensions are always set.
-   * fvtt-types omits the zoom limits Foundry stores in `scale`, so they are added to the type here.
+   * fvtt-types omits the zoom limits in `scale` and the text scale in `uiScale`, so they are added to the type here.
    * @returns {CanvasDimensions}
    */
   get dimensions() {
@@ -505,6 +522,7 @@ class VistaModule {
     this.drawOverlay();
     this.lockViewport();
     this.arrangeTokensDebounced();
+    for (const token of canvas.tokens?.placeables ?? []) token.renderFlags.set({ refreshState: true });
   }
 
   /**
@@ -516,6 +534,8 @@ class VistaModule {
    */
   onUpdateToken(tokenDoc, changes, options) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    const statusPath = `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STATUS}`;
+    if (foundry.utils.hasProperty(changes, statusPath)) tokenDoc.object?.renderFlags.set({ refreshState: true });
     if (this.isArrangement(options)) return;
     if (!["x", "y", "width", "height"].some((key) => key in changes)) return;
     this.arrangeTokensDebounced();
@@ -980,6 +1000,83 @@ class VistaModule {
   }
 
   // ─── Visuals ───
+
+  /**
+   * Handler for the drawToken hook.
+   * Adds the text object that shows the token's status line.
+   * @param {Token} token - The drawn token.
+   */
+  drawStatus(token) {
+    const text = new foundry.canvas.containers.PreciseText("", this.getStatusStyle(token, 1));
+    text.anchor.set(0.5, 0);
+    token.addChild(text);
+    this.statusTexts.set(token, text);
+  }
+
+  /**
+   * Handler for the refreshToken hook.
+   * Updates the status line and keeps it below the token's name.
+   * @param {Token} token - The refreshed token.
+   */
+  refreshStatus(token) {
+    const text = this.statusTexts.get(token);
+    if (!text) return;
+
+    const status = token.document.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STATUS) ?? "";
+    text.visible = !!status && this.isActive() && !token.document.isSecret;
+    if (!text.visible) return;
+
+    const { width, height } = token.document.getSize();
+    const nameplateHeight = token.nameplate?.visible ? token.nameplate.height : 0;
+    // Kept at a fixed size on screen, since Vista zooms far out to fit its large tokens.
+    const textScale = this.dimensions.uiScale / (canvas.stage?.scale.x ?? 1);
+    text.text = status;
+    text.style = this.getStatusStyle(token, textScale);
+    text.scale.set(textScale, textScale);
+    text.position.set(width / 2, height + 2 + nameplateHeight);
+  }
+
+  /**
+   * The status line's text style: Foundry's token text, but italic and dimmer than the name.
+   * @param {Token} token - The token the status belongs to.
+   * @param {number} textScale - The scale the text is drawn at.
+   * @returns {PIXI.TextStyle}
+   */
+  getStatusStyle(token, textScale) {
+    const style = CONFIG.canvasTextStyle.clone();
+    style.fontSize = 20;
+    style.fontStyle = "italic";
+    style.fill = "#d0d0d0";
+    style.wordWrapWidth = (token.w * 2.5) / textScale;
+    return style;
+  }
+
+  /**
+   * Handler for the renderTokenHUD hook.
+   * Adds a field for editing the token's status line on Vista scenes.
+   * @param {foundry.applications.hud.TokenHUD} hud - The token HUD.
+   * @param {HTMLElement} html - The HUD element.
+   */
+  injectStatusField(hud, html) {
+    const tokenDoc = hud.document;
+    if (!this.isActive() || !tokenDoc) return;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = tokenDoc.getFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STATUS) ?? "";
+    input.placeholder = game.i18n.localize("VISTA.StatusPlaceholder");
+    input.addEventListener("change", (event) => {
+      // Kept out of the HUD's form handling, which would parse the text as a number.
+      event.stopPropagation();
+      tokenDoc.setFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STATUS, input.value.trim());
+    });
+
+    const field = document.createElement("div");
+    field.className = "vista-status";
+    field.dataset.tooltip = "VISTA.Status";
+    field.append(input);
+    html.append(field);
+  }
 
   /**
    * Draws the overlay lines and labels.

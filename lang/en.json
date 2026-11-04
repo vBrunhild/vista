@@ -9,6 +9,8 @@
   "VISTA.Backstage": "Backstage Area",
   "VISTA.BackstageHint": "Adds a GM-only area to the right of the scene. Tokens placed there are hidden from players until moved into a strip. Its width follows the scene's padding.",
   "VISTA.BackstageLabel": "Backstage",
+  "VISTA.Status": "Status",
+  "VISTA.StatusPlaceholder": "Status, e.g. hiding behind the bar",
   "VISTA.StripLabels": "Strip Labels (comma-separated)",
   "VISTA.StripLabelsHint": "Optional labels for each strip, e.g. 'Bar, Common Room, Stage'.",
   "VISTA.StripLabelsPlaceholder": "Bar, Common Room, Stage",

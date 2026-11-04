@@ -33,6 +33,7 @@ declare module "fvtt-types/configuration" {
       vista: {
         stripIndex?: number;
         inBackstage?: boolean;
+        status?: string;
       };
     };
   }

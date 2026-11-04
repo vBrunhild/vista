@@ -1,0 +1,14 @@
+/* The status field sits just above the token, clear of the bar inputs at its bottom edge. */
+#token-hud > .vista-status {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+#token-hud > .vista-status input {
+  width: 16rem;
+  font-size: var(--font-size-14);
+  font-style: italic;
+  text-align: center;
+}
