@@ -394,7 +394,7 @@ class VistaModule {
 
   /**
    * Handler for the updateToken hook.
-   * Re-arranges after a manual move so the token snaps into its strip slot.
+   * Re-arranges after a manual move or visibility change.
    * @param {TokenDocument} tokenDoc - The updated token document.
    * @param {object} changes - The changes applied.
    * @param {object} options - The update options.
@@ -402,7 +402,7 @@ class VistaModule {
   onUpdateToken(tokenDoc, changes, options) {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     if (options.vistaArrangement) return;
-    if (!("x" in changes || "y" in changes)) return;
+    if (!("x" in changes || "y" in changes || "hidden" in changes)) return;
     this.arrangeTokensDebounced();
   }
 
@@ -513,13 +513,14 @@ class VistaModule {
   // ─── Token Layout & Updates ───
 
   /**
-   * Calculates the target layout for all tokens in the scene.
+   * Calculates the target layout for all visible tokens in the scene.
    * Separates layout logic from document update logic.
    * @returns {Map<string, object>} Map of token ID to target properties {x, y, width, height}.
    */
   calculateTokenTargets() {
     const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
-    const tokens = canvas.tokens.placeables;
+    // Hidden tokens would leave gaps that reveal their presence to players.
+    const tokens = canvas.tokens.placeables.filter((t) => !t.document.hidden);
     const baseSize = canvas.grid.size;
     const targets = new Map();
 
