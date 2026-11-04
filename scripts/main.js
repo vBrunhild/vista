@@ -332,15 +332,15 @@ class VistaModule {
       return this.preUpdateToken(tokenDoc, changes, options);
     });
 
-    Hooks.on("renderSceneConfig", (app, html, data) => {
-      return this.injectSceneConfig(app, html, data);
+    Hooks.on("renderSceneConfig", (app, html) => {
+      return this.injectSceneConfig(app, html);
     });
 
-    Hooks.on("updateCombat", (c, changes) => {
+    Hooks.on("updateCombat", () => {
       if (this.isActive()) this.arrangeTokensDebounced();
     });
 
-    Hooks.on("updateCombatant", (c, changes) => {
+    Hooks.on("updateCombatant", (combatant, changes) => {
       if (this.isActive() && "initiative" in changes) this.arrangeTokensDebounced();
     });
 
@@ -722,9 +722,8 @@ class VistaModule {
    * Injects the Vista settings into the Scene Configuration dialog.
    * @param {FormApplication} app - The app instance.
    * @param {HTMLElement} html - The HTML content.
-   * @param {object} data - The data object.
    */
-  injectSceneConfig(app, html, data) {
+  injectSceneConfig(app, html) {
     // Partial re-renders keep untouched parts, which may already hold the section.
     if (html.querySelector(".vista-config")) return;
 
