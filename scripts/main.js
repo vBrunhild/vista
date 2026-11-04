@@ -310,8 +310,8 @@ class VistaModule {
       if (this.isActive()) this.arrangeTokensDebounced();
     });
 
-    Hooks.on("createToken", (tokenDoc) => {
-      return this.onCreateToken(tokenDoc);
+    Hooks.on("createToken", () => {
+      if (this.isActive()) this.arrangeTokensDebounced();
     });
 
     Hooks.on("deleteCombat", () => {
@@ -326,8 +326,16 @@ class VistaModule {
       if (this.isActive()) this.arrangeTokensDebounced();
     });
 
+    Hooks.on("preCreateToken", (tokenDoc) => {
+      return this.preCreateToken(tokenDoc);
+    });
+
     Hooks.on("preUpdateScene", (scene, updateData) => {
       return this.preUpdateScene(scene, updateData);
+    });
+
+    Hooks.on("preUpdateToken", (tokenDoc, changes, options) => {
+      return this.preUpdateToken(tokenDoc, changes, options);
     });
 
     Hooks.on("renderSceneConfig", (app, html, data) => {
@@ -391,7 +399,7 @@ class VistaModule {
 
   /**
    * Handler for the updateToken hook.
-   * Detects manual token movement to update strip assignment.
+   * Re-arranges after a manual move so the token snaps into its strip slot.
    * @param {TokenDocument} tokenDoc - The updated token document.
    * @param {object} changes - The changes applied.
    * @param {object} options - The update options.
@@ -400,45 +408,32 @@ class VistaModule {
     if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
     if (options.vistaArrangement) return;
     if (!("x" in changes || "y" in changes)) return;
-    this.onTokenDrop(tokenDoc, changes);
-  }
-
-  /**
-   * Handler for the createToken hook.
-   * Assigns newly created tokens to the correct strip.
-   * @param {TokenDocument} tokenDoc - The created token document.
-   */
-  onCreateToken(tokenDoc) {
-    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
-    const { stripCount } = VistaConfig.get(canvas.scene);
-    const { height: sceneHeight } = canvas.dimensions;
-    const stripIndex = this.getStripIndexAtPosition(
-      tokenDoc.y + (canvas.grid.size / 2),
-      stripCount,
-      sceneHeight
-    );
-    tokenDoc.setFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP, stripIndex).then(() => {
-      this.arrangeTokensDebounced();
-    });
-  }
-
-  /**
-   * Handles logic when a token is dropped or moved manually.
-   * Updates the strip assignment based on Y position.
-   * @param {TokenDocument} tokenDoc - The token document.
-   * @param {object} updateData - The update data (containing x/y).
-   */
-  async onTokenDrop(tokenDoc, updateData) {
-    const { stripCount } = VistaConfig.get(canvas.scene);
-    const { height: sceneHeight } = canvas.dimensions;
-
-    const newY = updateData.y ?? tokenDoc.y;
-    const tokenHeight = tokenDoc.object?.h ?? canvas.grid.size;
-    const centerY = newY + tokenHeight / 2;
-    const stripIndex = this.getStripIndexAtPosition(centerY, stripCount, sceneHeight);
-
-    await tokenDoc.setFlag(VistaConfig.ID, VistaConfig.FLAG_TOKEN_STRIP, stripIndex);
     this.arrangeTokensDebounced();
+  }
+
+  /**
+   * Handler for the preCreateToken hook.
+   * Assigns the new token to the strip it was dropped on.
+   * @param {TokenDocument} tokenDoc - The token document being created.
+   */
+  preCreateToken(tokenDoc) {
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    const stripIndex = this.getStripIndexForToken(tokenDoc.y, tokenDoc.height);
+    tokenDoc.updateSource({ [`flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`]: stripIndex });
+  }
+
+  /**
+   * Handler for the preUpdateToken hook.
+   * Reassigns the strip in the same update as a manual move.
+   * @param {TokenDocument} tokenDoc - The token document being updated.
+   * @param {object} changes - The pending changes.
+   * @param {object} options - The update options.
+   */
+  preUpdateToken(tokenDoc, changes, options) {
+    if (!this.isActive() || tokenDoc.parent !== canvas.scene) return;
+    if (options.vistaArrangement || !("y" in changes)) return;
+    const stripIndex = this.getStripIndexForToken(changes.y, changes.height ?? tokenDoc.height);
+    foundry.utils.setProperty(changes, `flags.${VistaConfig.ID}.${VistaConfig.FLAG_TOKEN_STRIP}`, stripIndex);
   }
 
   // ─── Core Logic ───
@@ -471,19 +466,16 @@ class VistaModule {
   }
 
   /**
-   * Determines which strip corresponds to a given Y-coordinate.
-   * @param {number} y - The Y-coordinate.
-   * @param {number} stripCount - Total number of strips.
-   * @param {number} sceneHeight - Scene height.
+   * Determines which strip contains the center of a token.
+   * @param {number} y - The token's top Y-coordinate.
+   * @param {number} height - The token's height in grid units.
    * @returns {number} The strip index.
    */
-  getStripIndexAtPosition(
-    y,
-    stripCount,
-    sceneHeight
-  ) {
-    const stripHeight = sceneHeight / stripCount;
-    return Math.clamp(Math.floor(y / stripHeight), 0, stripCount - 1);
+  getStripIndexForToken(y, height) {
+    const { stripCount } = VistaConfig.get(canvas.scene);
+    const centerY = y + (height * canvas.grid.size) / 2;
+    const stripHeight = canvas.dimensions.height / stripCount;
+    return Math.clamp(Math.floor(centerY / stripHeight), 0, stripCount - 1);
   }
 
   /**
