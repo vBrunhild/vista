@@ -606,7 +606,7 @@ class VistaModule {
     if (rowCount > 1) {
       const totalRowHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
       if (totalRowHeight > availableHeight) {
-        scale = availableHeight / (rowCount * baseTokenSize + (rowCount - 1) * TOKEN_PADDING / baseTokenSize);
+        scale = (availableHeight - (rowCount - 1) * TOKEN_PADDING) / (rowCount * baseTokenSize);
         scale = Math.clamp(scale, MIN_SCALE, MAX_SCALE);
         scaledSize = baseTokenSize * scale;
         tokensPerRow = Math.max(1, Math.floor((availableWidth + TOKEN_PADDING) / (scaledSize + TOKEN_PADDING)));
