@@ -729,7 +729,7 @@ class VistaModule {
       </div>
       <div class="form-group">
         <label>${game.i18n.localize("VISTA.StripLabels")}</label>
-        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${(flags.stripLabels ?? []).join(", ")}" placeholder="Bar, Common Room, Stage" />
+        <input type="text" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_STRIP_LABELS}" value="${foundry.utils.escapeHTML(flags.stripLabels.join(", "))}" placeholder="Bar, Common Room, Stage" />
         <p class="notes">${game.i18n.localize("VISTA.StripLabelsHint")}</p>
       </div>
       <div class="form-group">
