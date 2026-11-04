@@ -177,6 +177,7 @@ class VistaModule {
     console.log(`${VistaConfig.ID} | Initializing Vista - Theater of the Mind Strips`);
     this.registerSettings();
     this.registerKeybindings();
+    this.registerSceneConfigTab();
     this.registerHooks();
   }
 
@@ -258,6 +259,17 @@ class VistaModule {
       config,
       type: Boolean,
       default: true,
+    });
+  }
+
+  /**
+   * Adds a Vista tab to the Scene Configuration dialog, filled in by {@link VistaModule#injectSceneConfig}.
+   */
+  registerSceneConfigTab() {
+    foundry.applications.sheets.SceneConfig.TABS.sheet.tabs.push({
+      id: VistaConfig.ID,
+      icon: "fa-solid fa-masks-theater",
+      label: "VISTA.Tab",
     });
   }
 
@@ -856,19 +868,21 @@ class VistaModule {
   }
 
   /**
-   * Injects the Vista settings into the Scene Configuration dialog.
+   * Fills the Vista tab of the Scene Configuration dialog.
    * @param {foundry.applications.sheets.SceneConfig} app - The app instance.
    * @param {HTMLElement} html - The HTML content.
    */
   injectSceneConfig(app, html) {
-    // Partial re-renders keep untouched parts, which may already hold the section.
-    if (html.querySelector(".vista-config")) return;
+    // The tab is not one of the sheet's parts, so it is rebuilt on each render to avoid stale values.
+    html.querySelector(`.tab[data-group="sheet"][data-tab="${VistaConfig.ID}"]`)?.remove();
 
     const scene = app.document;
     const flags = VistaConfig.get(scene);
+    const active = app.tabGroups.sheet === VistaConfig.ID ? " active" : "";
 
     const section = `
-    <fieldset class="vista-config">
+    <div class="tab scrollable${active}" data-group="sheet" data-tab="${VistaConfig.ID}">
+    <fieldset>
       <legend><i class="fas fa-theater-masks"></i> ${game.i18n.localize("VISTA.Settings")}</legend>
       <div class="form-group">
         <label>${game.i18n.localize("VISTA.EnableStrips")}</label>
@@ -900,19 +914,10 @@ class VistaModule {
         <input type="number" name="flags.${VistaConfig.ID}.${VistaConfig.FLAG_PAD_RIGHT}" value="${flags.padRight}" min="0" step="10" />
         <p class="notes">${game.i18n.localize("VISTA.PadRightHint")}</p>
       </div>
-    </fieldset>`;
+    </fieldset>
+    </div>`;
 
-    const basicsTab = html.querySelector('.tab[data-tab="basics"]');
-    if (basicsTab) {
-      basicsTab.insertAdjacentHTML("beforeend", section);
-    } else {
-      const target = html.querySelector('button[type="submit"]');
-      if (target) {
-        const insertPoint = target.closest(".form-group, .sheet-footer") ?? target.parentElement;
-        insertPoint?.insertAdjacentHTML("beforebegin", section);
-      }
-    }
-    app.setPosition({ height: "auto" });
+    html.querySelector(".form-footer")?.insertAdjacentHTML("beforebegin", section);
   }
 
   /**
