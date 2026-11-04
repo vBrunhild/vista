@@ -581,95 +581,124 @@ class VistaModule {
   calculateTokenTargets() {
     const { stripCount, padLeft, padRight } = VistaConfig.get(canvas.scene);
     const tokens = canvas.tokens.placeables;
-    const baseSize = canvas.grid.size;
     const targets = new Map();
-
-    const TOKEN_PADDING = 5;
-    const ROW_OFFSET_RATIO = 0.5;
 
     for (let i = 0; i < stripCount; i++) {
       const sorted = this.getSortedTokensForStrip(tokens, i, stripCount);
       if (!sorted.length) continue;
 
       const bounds = this.getStripBounds(i, stripCount, padLeft, padRight);
-
-      const { scale, rowCount, scaledSize } = this.computeTokenLayout(
-        sorted.length,
-        baseSize,
-        bounds
-      );
-
-      const baseTokensPerRow = Math.floor(sorted.length / rowCount);
-      const extraTokens = sorted.length % rowCount;
-      const rowLength = (row) => baseTokensPerRow + (row < extraTokens ? 1 : 0);
-      const totalRowsHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
-
-      let currentY = bounds.y + (bounds.height - totalRowsHeight) / 2;
-      let tokenIndex = 0;
-
-      for (let row = 0; row < rowCount; row++) {
-        const tokensInThisRow = rowLength(row);
-        const rowWidth = tokensInThisRow * scaledSize + (tokensInThisRow - 1) * TOKEN_PADDING;
-        const freeSpace = (bounds.width - rowWidth) / 2;
-
-        let startX = bounds.x + freeSpace;
-        // Rows of unequal length are already staggered by centering.
-        if (row % 2 === 1 && tokensInThisRow === rowLength(row - 1)) {
-          startX += Math.min((scaledSize + TOKEN_PADDING) * ROW_OFFSET_RATIO, freeSpace);
-        }
-
-        for (let col = 0; col < tokensInThisRow; col++) {
-          const token = sorted[tokenIndex++];
-          const targetX = startX + col * (scaledSize + TOKEN_PADDING);
-          const targetY = currentY;
-
-          targets.set(token.id, {
-            x: targetX,
-            y: targetY,
-            width: scale,
-            height: scale
-          });
-        }
-        currentY += scaledSize + TOKEN_PADDING;
-      }
+      const sizes = sorted.map((token) => this.getTokenBaseSize(token.document));
+      this.layoutStrip(sizes, bounds).forEach((target, index) => targets.set(sorted[index].id, target));
     }
     return targets;
   }
 
   /**
-   * Computes the layout parameters for tokens within a strip.
-   * @param {number} tokenCount - Number of tokens.
-   * @param {number} baseTokenSize - Base size of a token.
+   * Lays out a strip's tokens in centered rows at the largest uniform scale that fits,
+   * so tokens keep their sizes relative to each other.
+   * @param {{width: number, height: number}[]} sizes - Unscaled token sizes in grid units.
    * @param {object} stripBounds - Bounding box of the strip.
-   * @returns {object} Layout parameters {scale, tokensPerRow, rowCount, scaledSize}.
+   * @returns {object[]} Target properties {x, y, width, height} for each token, in input order.
    */
-  computeTokenLayout(tokenCount, baseTokenSize, stripBounds) {
+  layoutStrip(sizes, stripBounds) {
     const TOKEN_PADDING = 5;
     const STRIP_PADDING = 5;
     const MIN_SCALE = 0.5;
     const MAX_SCALE = 7.5;
+    const SEARCH_STEPS = 20;
 
-    if (tokenCount === 0) return { scale: 1.0, tokensPerRow: 0, rowCount: 1 };
-
-    const availableHeight = stripBounds.height - TOKEN_PADDING * 2;
     const availableWidth = stripBounds.width - STRIP_PADDING * 2;
+    const availableHeight = stripBounds.height - TOKEN_PADDING * 2;
+    const gridSize = canvas.grid.size;
 
-    let scale = Math.clamp(availableHeight / baseTokenSize, MIN_SCALE, MAX_SCALE);
-    let scaledSize = baseTokenSize * scale;
-    let tokensPerRow = Math.max(1, Math.floor((availableWidth + TOKEN_PADDING) / (scaledSize + TOKEN_PADDING)));
-    let rowCount = Math.ceil(tokenCount / tokensPerRow);
+    const widthsAt = (scale) => sizes.map((size) => size.width * scale * gridSize);
+    const rowHeightsAt = (rows, scale) => rows.map((row) => Math.max(...row.map((i) => sizes[i].height)) * scale * gridSize);
+    const totalHeight = (rowHeights) => rowHeights.reduce((sum, h) => sum + h, 0) + (rowHeights.length - 1) * TOKEN_PADDING;
+    const fits = (scale) => {
+      const widths = widthsAt(scale);
+      if (Math.max(...widths) > availableWidth) return false;
+      const rows = this.packRows(widths, availableWidth, TOKEN_PADDING);
+      return totalHeight(rowHeightsAt(rows, scale)) <= availableHeight;
+    };
 
-    if (rowCount > 1) {
-      const totalRowHeight = rowCount * scaledSize + (rowCount - 1) * TOKEN_PADDING;
-      if (totalRowHeight > availableHeight) {
-        scale = (availableHeight - (rowCount - 1) * TOKEN_PADDING) / (rowCount * baseTokenSize);
-        scale = Math.clamp(scale, MIN_SCALE, MAX_SCALE);
-        scaledSize = baseTokenSize * scale;
-        tokensPerRow = Math.max(1, Math.floor((availableWidth + TOKEN_PADDING) / (scaledSize + TOKEN_PADDING)));
-        rowCount = Math.ceil(tokenCount / tokensPerRow);
+    // Binary search for the largest fitting scale. MIN_SCALE is used even if it overflows.
+    let scale = MIN_SCALE;
+    if (fits(MAX_SCALE)) scale = MAX_SCALE;
+    else {
+      let tooLarge = MAX_SCALE;
+      for (let step = 0; step < SEARCH_STEPS; step++) {
+        const mid = (scale + tooLarge) / 2;
+        if (fits(mid)) scale = mid;
+        else tooLarge = mid;
       }
     }
-    return { scale, tokensPerRow, rowCount, scaledSize };
+
+    const widths = widthsAt(scale);
+    let rows = this.packRows(widths, availableWidth, TOKEN_PADDING);
+
+    // Greedy packing leaves the last row short, so narrow the rows as far as possible without adding one.
+    let narrowest = Math.max(...widths);
+    let widest = availableWidth;
+    for (let step = 0; step < SEARCH_STEPS; step++) {
+      const mid = (narrowest + widest) / 2;
+      if (this.packRows(widths, mid, TOKEN_PADDING).length <= rows.length) widest = mid;
+      else narrowest = mid;
+    }
+    const balanced = this.packRows(widths, widest, TOKEN_PADDING);
+    // Regrouping mixed sizes can raise row heights past the strip, in which case the greedy rows are kept.
+    if (totalHeight(rowHeightsAt(balanced, scale)) <= availableHeight) rows = balanced;
+
+    const rowHeights = rowHeightsAt(rows, scale);
+    const targets = [];
+    let rowTop = stripBounds.y + (stripBounds.height - totalHeight(rowHeights)) / 2;
+
+    rows.forEach((row, r) => {
+      const rowWidth = row.reduce((sum, i) => sum + widths[i], 0) + (row.length - 1) * TOKEN_PADDING;
+      let x = stripBounds.x + (stripBounds.width - rowWidth) / 2;
+
+      for (const i of row) {
+        const height = sizes[i].height * scale * gridSize;
+        // Bottom-aligned so tokens of different sizes stand on a shared line.
+        targets[i] = {
+          x,
+          y: rowTop + rowHeights[r] - height,
+          width: sizes[i].width * scale,
+          height: sizes[i].height * scale,
+        };
+        x += widths[i] + TOKEN_PADDING;
+      }
+      rowTop += rowHeights[r] + TOKEN_PADDING;
+    });
+
+    return targets;
+  }
+
+  /**
+   * Splits tokens into consecutive rows no wider than the given width, preserving their order.
+   * @param {number[]} widths - Token widths in pixels.
+   * @param {number} maxWidth - The maximum row width in pixels.
+   * @param {number} gap - The spacing between tokens in pixels.
+   * @returns {number[][]} Token indices for each row.
+   */
+  packRows(widths, maxWidth, gap) {
+    const rows = [];
+    let row = [];
+    let rowWidth = 0;
+
+    widths.forEach((width, i) => {
+      const nextWidth = row.length ? rowWidth + gap + width : width;
+      if (row.length && nextWidth > maxWidth) {
+        rows.push(row);
+        row = [i];
+        rowWidth = width;
+      } else {
+        row.push(i);
+        rowWidth = nextWidth;
+      }
+    });
+    rows.push(row);
+    return rows;
   }
 
   /**
