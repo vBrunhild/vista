@@ -102,8 +102,7 @@ class VistaLayer extends foundry.canvas.layers.CanvasLayer {
       stripLinesVisible
     } = config;
 
-    const lineColorHex = game.settings.get(VistaConfig.ID, "lineColor");
-    const lineColor = parseInt(lineColorHex.replace('#', ''), 16);
+    const lineColor = foundry.utils.Color.from(game.settings.get(VistaConfig.ID, "lineColor")).valueOf();
     const lineThickness = game.settings.get(VistaConfig.ID, "lineThickness");
     const lineOpacity = game.settings.get(VistaConfig.ID, "lineOpacity");
 
@@ -181,10 +180,10 @@ class VistaModule {
 
     game.settings.register(VistaConfig.ID, "lineColor", {
       name: "Strip Divider Color",
-      hint: "Color of the horizontal lines between strips (hex color)",
+      hint: "Color of the horizontal lines between strips",
       scope,
       config,
-      type: String,
+      type: new foundry.data.fields.ColorField({ nullable: false }),
       default: "#000000",
       onChange: () => {
         if (canvas.scene && this.isActive()) this.drawOverlay();
