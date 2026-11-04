@@ -27,6 +27,7 @@ declare module "fvtt-types/configuration" {
         stripLinesVisible?: boolean;
         sideBySide?: boolean;
         backstage?: boolean;
+        background?: string;
       };
     };
     Token: {
@@ -60,6 +61,7 @@ declare global {
     namespace Canvas {
       interface Layers {
         vista: CONFIG.Canvas.LayerDefinition<typeof VistaLayer, "interface">;
+        vistaBackground: CONFIG.Canvas.LayerDefinition<typeof VistaBackgroundLayer, "rendered">;
       }
     }
   }
