@@ -31,7 +31,6 @@ declare module "fvtt-types/configuration" {
     Token: {
       vista: {
         stripIndex?: number;
-        baseSize?: { width: number; height: number };
       };
     };
   }
